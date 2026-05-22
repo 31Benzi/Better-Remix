@@ -23,7 +23,7 @@
 | Infinite Ammo | Added |
 | Keep Inventory on Death | Added |
 | No Fall Damage | Added |
-| Early Bud Start | Added |
+| Early Bus Start | Added |
 | Reset Builds | Added |
 
 ---
