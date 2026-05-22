@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="32.11.vcxproj" Id="7db80944-8d56-4efb-a0bb-fae21383c06a" />
+  <Project Path="RemixConsole\RemixConsole.vcxproj" Id="4a520fb1-8153-4889-bc01-e2db2c3bf9a7" />
+</Solution>

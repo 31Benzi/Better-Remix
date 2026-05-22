@@ -1,0 +1,26 @@
+# Visual Studio
+.vs/
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+x64/
+x86/
+
+# C++
+*.pdb
+*.obj
+*.iobj
+*.ipdb
+*.log
+*.tlog
+*.lastbuildstate
+*.idb
+*.cache
+*.intermediate.manifest
+*.enc
+*.ilk
+*.exp
+*.lib

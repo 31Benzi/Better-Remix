@@ -1,0 +1,26 @@
+[CrashReporter] Caught unhandled exception (Code: EXCEPTION_ACCESS_VIOLATION)
+- Trying to read 0x0000000000000018
+
+0x00000000019c6d0c (FortniteClient-Win64-Shipping.exe+0x1656d0c): [unknown]
+0x00000000020b16f7 (FortniteClient-Win64-Shipping.exe+0x1d416f7): [unknown]
+0x0000000009d23fbf (FortniteClient-Win64-Shipping.exe+0x99b3fbf): [unknown]
+0x000000000a3ce208 (FortniteClient-Win64-Shipping.exe+0xa05e208): [unknown]
+0x00000000095407fa (FortniteClient-Win64-Shipping.exe+0x91d07fa): [unknown]
+0x0000000005f1bed4 (FortniteClient-Win64-Shipping.exe+0x5babed4): [unknown]
+0x000000000a2f248a (FortniteClient-Win64-Shipping.exe+0x9f8248a): [unknown]
+0x000000000a2e3126 (FortniteClient-Win64-Shipping.exe+0x9f73126): [unknown]
+0x0000000006c7d642 (FortniteClient-Win64-Shipping.exe+0x690d642): [unknown]
+0x00000000019f4557 (FortniteClient-Win64-Shipping.exe+0x1684557): [unknown]
+0x0000000002508f7c (FortniteClient-Win64-Shipping.exe+0x2198f7c): [unknown]
+0x0000000005be5f75 (FortniteClient-Win64-Shipping.exe+0x5875f75): [unknown]
+0x0000000005c902a5 (FortniteClient-Win64-Shipping.exe+0x59202a5): [unknown]
+0x000000000286f074 (FortniteClient-Win64-Shipping.exe+0x24ff074): [unknown]
+0x00000000021ae9c2 (FortniteClient-Win64-Shipping.exe+0x1e3e9c2): [unknown]
+0x00000000021c8841 (FortniteClient-Win64-Shipping.exe+0x1e58841): [unknown]
+0x0000000002beec75 (FortniteClient-Win64-Shipping.exe+0x287ec75): [unknown]
+0x0000000004b40daf (FortniteClient-Win64-Shipping.exe+0x47d0daf): [unknown]
+0x0000000002cf5835 (FortniteClient-Win64-Shipping.exe+0x2985835): [unknown]
+0x0000000004e84327 (FortniteClient-Win64-Shipping.exe+0x4b14327): [unknown]
+0x0000000005557046 (FortniteClient-Win64-Shipping.exe+0x51e7046): [unknown]
+0x00007ffcfb17e957 (KERNEL32.DLL+0x2e957): BaseThreadInitThunk()
+0x00007ffcfcf4427c (ntdll.dll+0x427c): RtlUserThreadStart()
