@@ -4,10 +4,10 @@ constexpr auto bProd = false;
 inline auto Port = 7777;
 inline std::wstring GameserverIP;
 inline std::string Region = "EU";
-inline std::wstring Playlist = L"/BlastBerry/Playlists/Playlist_PunchBerrySolo.Playlist_PunchBerrySolo";
+inline std::wstring Playlist = L"/BlastBerry/Playlists/Playlist_SunflowerSolo.Playlist_SunflowerSolo";
 inline bool bInit = false;
 inline bool bReady = false;
-inline bool bEnableZones = false;
+inline bool bEnableZones = true;
 inline bool bEvent = false;
 inline easywsclient::WebSocket* gsSocket = nullptr;
 

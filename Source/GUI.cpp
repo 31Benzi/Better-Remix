@@ -665,14 +665,13 @@ void GUI::Init()
             ImGui::EndChild();
             ImGui::Spacing();
 
-            ImGui::BeginChild("DangerZone", ImVec2(0, 110 * main_scale), true);
+            ImGui::BeginChild("DangerZone", ImVec2(0, 95 * main_scale), true, ImGuiWindowFlags_NoScrollbar);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.35f, 0.35f, 1.00f));
             ImGui::Text("DANGER ZONE");
             ImGui::PopStyleColor();
             ImGui::Separator();
             ImGui::Spacing();
 
-            ImGui::Columns(2, nullptr, false);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.15f, 0.15f, 1.00f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.18f, 0.18f, 1.00f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.20f, 0.20f, 1.00f));
@@ -691,27 +690,6 @@ void GUI::Init()
                 Actors.Free();
             }
             ImGui::PopStyleColor(3);
-
-            ImGui::NextColumn();
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.15f, 0.15f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.18f, 0.18f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.20f, 0.20f, 1.00f));
-            if (ImGui::Button("Destroy Loot", ImVec2(-1, 35)))
-            {
-                TArray<AActor*> Actors;
-                UGameplayStatics::GetAllActorsOfClass(GetWorld(), AFortPickupAthena::StaticClass(), &Actors);
-
-                for (auto& Actor : Actors)
-                {
-                    auto Pickup = (AFortPickupAthena*)Actor;
-                    if (Pickup)
-                        Pickup->K2_DestroyActor();
-                }
-
-                Actors.Free();
-            }
-            ImGui::PopStyleColor(3);
-            ImGui::Columns(1);
             ImGui::EndChild();
             break;
         }
