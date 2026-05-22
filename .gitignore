@@ -24,3 +24,6 @@ x86/
 *.ilk
 *.exp
 *.lib
+
+# Runtime crash dumps
+RemixCrashes/
