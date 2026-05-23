@@ -40,7 +40,7 @@
 
 ## Planned Features
 
-> These are ideas being considered for future updates — not confirmed.
+> These are ideas being considered for future updates not confirmed.
 
 - Player AIs
 - XP system
