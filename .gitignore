@@ -25,5 +25,8 @@ x86/
 *.exp
 *.lib
 
+# Allow third-party prebuilt libs
+!ThirdParty/**/*.lib
+
 # Runtime crash dumps
 RemixCrashes/

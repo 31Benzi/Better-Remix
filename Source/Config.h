@@ -7,7 +7,7 @@ inline std::string Region = "EU";
 inline std::wstring Playlist = L"/BlastBerry/Playlists/Playlist_SunflowerSolo.Playlist_SunflowerSolo";
 inline bool bInit = false;
 inline bool bReady = false;
-inline bool bEnableZones = true;
+inline bool bEnableZones = false;
 inline bool bEvent = false;
 inline easywsclient::WebSocket* gsSocket = nullptr;
 
