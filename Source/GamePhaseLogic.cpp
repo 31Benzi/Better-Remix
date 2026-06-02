@@ -8,8 +8,41 @@
 #include <thread>
 INIT_TICKER(GamePhaseLogic);
 
+static UFortPlaylistAthena* ResolveCurrentPlaylist(AFortGameStateAthena* GameState)
+{
+    if (!GameState)
+        return nullptr;
+
+    auto PlaylistObj = GameState->CurrentPlaylistInfo.BasePlaylist;
+    if (IsValidUObject(PlaylistObj, UFortPlaylistAthena::StaticClass()))
+        return PlaylistObj;
+
+    if (PlaylistObj)
+    {
+        printf("[GamePhaseLogic] Invalid playlist pointer %p. Restoring configured playlist.\n", PlaylistObj);
+        GameState->CurrentPlaylistInfo.BasePlaylist = nullptr;
+    }
+
+    PlaylistObj = FindObject<UFortPlaylistAthena>(bEvent ? L"/QuailPlaylist/Playlist/Playlist_Quail.Playlist_Quail" : Playlist.c_str());
+    if (!PlaylistObj)
+        PlaylistObj = FindObject<UFortPlaylistAthena>(L"/BRPlaylists/Athena/Playlists/Playlist_DefaultSolo.Playlist_DefaultSolo");
+    if (!PlaylistObj)
+        PlaylistObj = FindObject<UFortPlaylistAthena>(L"/Game/Athena/Playlists/Playlist_DefaultSolo.Playlist_DefaultSolo");
+
+    if (PlaylistObj)
+    {
+        GameState->CurrentPlaylistInfo.BasePlaylist = PlaylistObj;
+        GameState->CurrentPlaylistId = PlaylistObj->PlaylistId;
+    }
+
+    return PlaylistObj;
+}
+
 void SetGamePhaseStep(UFortGameStateComponent_BattleRoyaleGamePhaseLogic* GamePhaseLogic, EAthenaGamePhaseStep Step)
 {
+    if (!GamePhaseLogic)
+        return;
+
     GamePhaseLogic->GamePhaseStep = Step;
     GamePhaseLogic->HandleGamePhaseStepChanged(Step);
 }
@@ -18,17 +51,21 @@ void StartAircraftPhase(UFortGameStateComponent_BattleRoyaleGamePhaseLogic* Game
 {
     GUI::gsStatus = StartedMatch;
 
-    auto GameState = (AFortGameStateAthena*)GetWorld()->GameState;
-    auto GameMode = (AFortGameModeAthena*)GetWorld()->AuthorityGameMode;
-    auto Playlist = GameState->CurrentPlaylistInfo.BasePlaylist;
-    auto Time = UGameplayStatics::GetTimeSeconds(GetWorld());
+    auto World = GetWorld();
+    if (!World || !World->GameState || !World->AuthorityGameMode || !GamePhaseLogic)
+        return;
+
+    auto GameState = (AFortGameStateAthena*)World->GameState;
+    auto GameMode = (AFortGameModeAthena*)World->AuthorityGameMode;
+    auto PlaylistObj = ResolveCurrentPlaylist(GameState);
+    auto Time = UGameplayStatics::GetTimeSeconds(World);
 
     if (bLateGame)
     {
         GameState->DefaultParachuteDeployTraceForGroundDistance = 2500.f;
     }
 
-    if (Playlist->bSkipAircraft)
+    if (PlaylistObj && PlaylistObj->bSkipAircraft)
     {
         GamePhaseLogic->SetGamePhase(EAthenaGamePhase::SafeZones);
         SetGamePhaseStep(GamePhaseLogic, EAthenaGamePhaseStep::StormForming);
@@ -37,7 +74,7 @@ void StartAircraftPhase(UFortGameStateComponent_BattleRoyaleGamePhaseLogic* Game
     }
 
 
-    if (GameState->MapInfo->FlightInfos.Num() > 0)
+    if (GameState->MapInfo && GameState->MapInfo->FlightInfos.Num() > 0)
     {
         // TArray<TWeakObjectPtr<AFortAthenaAircraft>> Aircrafts;
 
@@ -114,17 +151,25 @@ AFortSafeZoneIndicator* SetupSafeZoneIndicator(UFortGameStateComponent_BattleRoy
 {
     // thanks heliato
 
+    if (!GamePhaseLogic)
+        return nullptr;
+
     if (!GamePhaseLogic->SafeZoneIndicator)
     {
         AFortSafeZoneIndicator* SafeZoneIndicator = SpawnActor<AFortSafeZoneIndicator>(GamePhaseLogic->SafeZoneIndicatorClass, FVector {});
 
         if (SafeZoneIndicator)
         {
-            auto GameState = (AFortGameStateAthena*)GetWorld()->GameState;
-            FFortSafeZoneDefinition& SafeZoneDefinition = GameState->MapInfo->SafeZoneDefinition;
-            float SafeZoneCount = EvaluateScalableFloat(SafeZoneDefinition.Count);
+            auto World = GetWorld();
+            auto GameState = World ? (AFortGameStateAthena*)World->GameState : nullptr;
+            if (!GameState || !GameState->MapInfo)
+                return GamePhaseLogic->SafeZoneIndicator;
 
-            SafeZoneIndicator->PlaylistMaxSafeZoneIndex = GameState->CurrentPlaylistInfo.BasePlaylist->LastSafeZoneIndex;
+            auto PlaylistObj = ResolveCurrentPlaylist(GameState);
+            FFortSafeZoneDefinition& SafeZoneDefinition = GameState->MapInfo->SafeZoneDefinition;
+            int SafeZoneCount = (int)EvaluateScalableFloat(SafeZoneDefinition.Count);
+
+            SafeZoneIndicator->PlaylistMaxSafeZoneIndex = PlaylistObj ? PlaylistObj->LastSafeZoneIndex : -1;
             /*auto SafeZoneCount = (float)GameState->CurrentPlaylistInfo.BasePlaylist->LastSafeZoneIndex;
             if (SafeZoneCount == -1)
                 SafeZoneCount = EvaluateScalableFloat(GameState->MapInfo->SafeZoneDefinition.Count);
@@ -139,28 +184,31 @@ AFortSafeZoneIndicator* SetupSafeZoneIndicator(UFortGameStateComponent_BattleRoy
             const float Time = (float)UGameplayStatics::GetTimeSeconds(GameState);
             auto& SafeZoneLocations = *(TArray<FVector>*)(__int64(GamePhaseLogic) + 0x458);
 
-            for (float i = 0; i < SafeZoneCount; i++)
+            if (SafeZoneCount > SafeZoneLocations.Num())
+                SafeZoneCount = SafeZoneLocations.Num();
+
+            for (int i = 0; i < SafeZoneCount; i++)
             {
                 FFortSafeZonePhaseInfo PhaseInfo {};
 
-                PhaseInfo.Radius = EvaluateScalableFloat(SafeZoneDefinition.Radius, i);
-                PhaseInfo.WaitTime = EvaluateScalableFloat(SafeZoneDefinition.WaitTime, i);
-                PhaseInfo.ShrinkTime = EvaluateScalableFloat(SafeZoneDefinition.ShrinkTime, i);
-                PhaseInfo.PlayerCap = (int)EvaluateScalableFloat(SafeZoneDefinition.PlayerCapSolo, i);
+                PhaseInfo.Radius = EvaluateScalableFloat(SafeZoneDefinition.Radius, (float)i);
+                PhaseInfo.WaitTime = EvaluateScalableFloat(SafeZoneDefinition.WaitTime, (float)i);
+                PhaseInfo.ShrinkTime = EvaluateScalableFloat(SafeZoneDefinition.ShrinkTime, (float)i);
+                PhaseInfo.PlayerCap = (int)EvaluateScalableFloat(SafeZoneDefinition.PlayerCapSolo, (float)i);
 
                 UDataTableFunctionLibrary::EvaluateCurveTableRow(
-                    GameState->AthenaGameDataTable, FName(L"Default.SafeZone.Damage"), i, nullptr, &PhaseInfo.DamageInfo.Damage, FString());
+                    GameState->AthenaGameDataTable, FName(L"Default.SafeZone.Damage"), (float)i, nullptr, &PhaseInfo.DamageInfo.Damage, FString());
 
                 PhaseInfo.DamageInfo.bPercentageBasedDamage = true;
-                PhaseInfo.TimeBetweenStormCapDamage = EvaluateScalableFloat(GamePhaseLogic->TimeBetweenStormCapDamage, i);
-                PhaseInfo.StormCapDamagePerTick = EvaluateScalableFloat(GamePhaseLogic->StormCapDamagePerTick, i);
-                PhaseInfo.StormCampingIncrementTimeAfterDelay = EvaluateScalableFloat(GamePhaseLogic->StormCampingIncrementTimeAfterDelay, i);
-                PhaseInfo.StormCampingInitialDelayTime = EvaluateScalableFloat(GamePhaseLogic->StormCampingInitialDelayTime, i);
-                PhaseInfo.MegaStormGridCellThickness = (int)EvaluateScalableFloat(SafeZoneDefinition.MegaStormGridCellThickness, i);
+                PhaseInfo.TimeBetweenStormCapDamage = EvaluateScalableFloat(GamePhaseLogic->TimeBetweenStormCapDamage, (float)i);
+                PhaseInfo.StormCapDamagePerTick = EvaluateScalableFloat(GamePhaseLogic->StormCapDamagePerTick, (float)i);
+                PhaseInfo.StormCampingIncrementTimeAfterDelay = EvaluateScalableFloat(GamePhaseLogic->StormCampingIncrementTimeAfterDelay, (float)i);
+                PhaseInfo.StormCampingInitialDelayTime = EvaluateScalableFloat(GamePhaseLogic->StormCampingInitialDelayTime, (float)i);
+                PhaseInfo.MegaStormGridCellThickness = (int)EvaluateScalableFloat(SafeZoneDefinition.MegaStormGridCellThickness, (float)i);
                 PhaseInfo.UsePOIStormCenter = false;
                 PhaseInfo.TravelSplineComponent = SafeZoneIndicator->CurrentTravelSplineComponent;
 
-                PhaseInfo.Center = SafeZoneLocations[(int)i];
+                PhaseInfo.Center = SafeZoneLocations[i];
 
                 Array.Add(PhaseInfo);
 
@@ -185,6 +233,9 @@ AFortSafeZoneIndicator* SetupSafeZoneIndicator(UFortGameStateComponent_BattleRoy
 
 void StartNewSafeZonePhase(AFortSafeZoneIndicator* SafeZoneIndicator, int NewSafeZonePhase)
 {
+    if (!SafeZoneIndicator)
+        return;
+
     float TimeSeconds = (float)UGameplayStatics::GetTimeSeconds(GetWorld());
     auto& Array = SafeZoneIndicator->SafeZonePhases;
 
@@ -246,22 +297,29 @@ void StartNewSafeZonePhase(AFortSafeZoneIndicator* SafeZoneIndicator, int NewSaf
         P.State = EFortSafeZoneState::Holding;
         SafeZoneIndicator->SafezoneStateChangedDelegate.Process(&P);
 
-        auto GamePhaseLogic = UFortGameStateComponent_BattleRoyaleGamePhaseLogic::Get(SafeZoneIndicator);
-        SetGamePhaseStep(GamePhaseLogic, EAthenaGamePhaseStep::StormHolding);
+        if (auto GamePhaseLogic = UFortGameStateComponent_BattleRoyaleGamePhaseLogic::Get(SafeZoneIndicator))
+            SetGamePhaseStep(GamePhaseLogic, EAthenaGamePhaseStep::StormHolding);
     }
 }
 
 extern "C" void NtTerminateProcess(HANDLE hProcess, UINT uExitCode);
 void GamePhaseLogic__Tick()
 {
-    auto GameState = (AFortGameStateAthena*)GetWorld()->GameState;
-    auto GameMode = (AFortGameModeAthena*)GetWorld()->AuthorityGameMode;
+    auto World = GetWorld();
+    if (!World || !World->GameState || !World->AuthorityGameMode)
+        return;
+
+    auto GameState = (AFortGameStateAthena*)World->GameState;
+    auto GameMode = (AFortGameModeAthena*)World->AuthorityGameMode;
     auto GamePhaseLogic = UFortGameStateComponent_BattleRoyaleGamePhaseLogic::Get(GameState);
-    auto PlaylistObj = GameState->CurrentPlaylistInfo.BasePlaylist;
-    auto Time = UGameplayStatics::GetTimeSeconds(GetWorld());
+    if (!GamePhaseLogic)
+        return;
+
+    auto PlaylistObj = ResolveCurrentPlaylist(GameState);
+    auto Time = UGameplayStatics::GetTimeSeconds(World);
 
     static bool finishedFlight = false;
-    if (!PlaylistObj->bSkipAircraft)
+    if (!PlaylistObj || !PlaylistObj->bSkipAircraft)
     {
         if (GamePhaseLogic->GamePhase == EAthenaGamePhase::Warmup)
         {
@@ -286,7 +344,7 @@ void GamePhaseLogic__Tick()
                 {
                     gettingReady = true;
 
-                    if (bProd)
+                    if (bProd && gsSocket)
                     {
                         gsSocket->close();
                         gsSocket = nullptr;

@@ -234,6 +234,49 @@ LONG WINAPI RemixUnhandledExceptionFilter(LPEXCEPTION_POINTERS ExceptionInfo)
     std::ofstream fs(CrashF);
     fs.write(reportStr.c_str(), reportStr.size());
     fs.close();
+    
+    // Save Console Buffer to log file
+    HANDLE hConsole = CreateFileA("CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hConsole != INVALID_HANDLE_VALUE)
+    {
+        CONSOLE_SCREEN_BUFFER_INFO csbi;
+        if (GetConsoleScreenBufferInfo(hConsole, &csbi))
+    {
+        DWORD length = (csbi.dwCursorPosition.Y + 1) * csbi.dwSize.X;
+        std::string ConsoleBuffer;
+        ConsoleBuffer.resize(length);
+        DWORD read = 0;
+        if (ReadConsoleOutputCharacterA(hConsole, &ConsoleBuffer[0], length, {0, 0}, &read))
+        {
+            ConsoleBuffer.resize(read);
+            
+            std::string CleanBuffer;
+            CleanBuffer.reserve(read);
+            for (int y = 0; y <= csbi.dwCursorPosition.Y; ++y)
+            {
+                int start = y * csbi.dwSize.X;
+                int end = start + csbi.dwSize.X - 1;
+                // Make sure we don't read out of bounds if read is smaller than expected
+                if (end >= (int)read) end = read - 1;
+                
+                while (end >= start && ConsoleBuffer[end] == ' ')
+                    end--;
+                    
+                if (end >= start)
+                    CleanBuffer.append(&ConsoleBuffer[start], end - start + 1);
+                CleanBuffer += "\n";
+            }
+            
+            std::string LogF = "C:\\Users\\Benzi\\Downloads\\Remix-gameserver-main\\Remix-gameserver-main\\RemixCrashes\\Crash-" + std::to_string(time(0)) + ".log";
+            std::ofstream fsLog(LogF);
+            fsLog.write(CleanBuffer.c_str(), CleanBuffer.size());
+            fsLog.close();
+            printf("[Remix] Console buffer saved to: %s\n", LogF.c_str());
+        }
+        } // Close GetConsoleScreenBufferInfo
+        CloseHandle(hConsole);
+    } // Close hConsole check
+
     CreateMinidump(ExceptionInfo);
     printf("[Remix] Minidump generated successfully inside absolute 'RemixCrashes' folder!\n");
 

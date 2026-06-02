@@ -795,10 +795,33 @@ char GetTickableTickType()
     return 2; // Never
 }
 
+void* (*GetLinkerForObjectOG)(UObject* Object);
+void* GetLinkerForObject(UObject* Object)
+{
+    static bool bLoggedNullObject = false;
+
+    if (!Object)
+    {
+        if (!bLoggedNullObject)
+        {
+            printf("[Remix] Skipping engine linker lookup for null object.\n");
+            bLoggedNullObject = true;
+        }
+        return nullptr;
+    }
+
+    auto GetPackageForObject = (UObject * (*)(UObject*))(ImageBase + 0x1656D08);
+    if (!GetPackageForObject(Object))
+        return nullptr;
+
+    return GetLinkerForObjectOG(Object);
+}
+
 void Misc__Init()
 {
     Hook(ImageBase + 0x16562A4, WorldNetMode);
     Hook(ImageBase + 0x2196B08, WorldNetMode);
+    Hook(ImageBase + 0x1D416EC, GetLinkerForObject, GetLinkerForObjectOG);
     Hook(ImageBase + 0x521AFC0, CheckCheckpointHeartBeat);
     Hook(ImageBase + 0x7DE4ED0, SendRequestNow, SendRequestNowOG);
     Hook(ImageBase + 0x189FE98, GetMaxTickRate);

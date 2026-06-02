@@ -11,6 +11,68 @@
 
 INIT_MODULE(GameMode);
 
+static AFortAthenaMapInfo* ResolveMapInfo(AFortGameStateAthena* GameState)
+{
+    if (!GameState)
+        return nullptr;
+
+    if (GameState->MapInfo)
+        return GameState->MapInfo;
+
+    TArray<AActor*> MapInfoActors;
+    UGameplayStatics::GetAllActorsOfClass(GetWorld(), AFortAthenaMapInfo::StaticClass(), &MapInfoActors);
+    if (MapInfoActors.Num() > 0)
+    {
+        GameState->MapInfo = (AFortAthenaMapInfo*)MapInfoActors[0];
+        GameState->OnRep_MapInfo();
+        printf("[Remix] Resolved MapInfo from world actor: %s\n", MapInfoActors[0]->Name.ToString().c_str());
+    }
+    MapInfoActors.Free();
+
+    if (!GameState->MapInfo)
+        printf("[Remix] Warning: MapInfo not found on GameState or in world.\n");
+
+    return GameState->MapInfo;
+}
+
+static void EnsureFlightPathInitialized(AFortAthenaMapInfo* MapInfo, AFortGameStateAthena* GameState, UFortGameStateComponent_BattleRoyaleGamePhaseLogic* GamePhaseLogic)
+{
+    if (!MapInfo || !GameState || !GamePhaseLogic || MapInfo->FlightInfos.Num() > 0)
+        return;
+
+    auto InitializeFlightPath
+        = (void (*)(AFortAthenaMapInfo*, AFortGameStateAthena*, UFortGameStateComponent_BattleRoyaleGamePhaseLogic*, bool, double, float, float))(ImageBase + 0x9101F80);
+
+    if (InitializeFlightPath)
+    {
+        printf("[Remix] Initializing flight path (FlightInfos was empty).\n");
+        InitializeFlightPath(MapInfo, GameState, GamePhaseLogic, false, 0.f, 0.f, 360.f);
+    }
+}
+
+// Configure playlist for infinite respawn (pattern from Erbium SetupPlaylist)
+static void ConfigureInfiniteRespawn(UFortPlaylistAthena* Playlist)
+{
+    if (!bInfiniteRespawn || !Playlist || Playlist->GameType == EFortGameType::BlastBerry)
+        return;
+
+    Playlist->bRespawnInAir = true;
+
+    Playlist->RespawnHeight.Curve.CurveTable = nullptr;
+    Playlist->RespawnHeight.Curve.RowName = FName();
+    Playlist->RespawnHeight.Value = 20000.f;
+
+    Playlist->RespawnTime.Curve.CurveTable = nullptr;
+    Playlist->RespawnTime.Curve.RowName = FName();
+    Playlist->RespawnTime.Value = RespawnDelaySeconds;
+
+    // InfiniteRespawnExceptStorm allows unlimited respawns outside the storm
+    Playlist->RespawnType = EAthenaRespawnType::InfiniteRespawnExceptStorm;
+
+    if (Playlist->bAllowJoinInProgress == false)
+        Playlist->bAllowJoinInProgress = true;
+}
+
 void SpawnAI(const wchar_t* Path, AFortAthenaPatrolPath* PatrolPath)
 {
     //printf("SpawnAI %ls\n", Path);
@@ -23,7 +85,10 @@ void SpawnAI(const wchar_t* Path, AFortAthenaPatrolPath* PatrolPath)
     auto ComponentList = UFortAthenaAISpawnerData::CreateComponentListFromClass(Class, GetWorld());
 
     auto Transform = PatrolPath->PatrolPoints[0]->GetTransform();
-    ((UAthenaAISystem*)GetWorld()->AISystem)->AISpawner->RequestSpawn(ComponentList, Transform, true);
+    if (GetWorld()->AISystem)
+    {
+        ((UAthenaAISystem*)GetWorld()->AISystem)->AISpawner->RequestSpawn(ComponentList, Transform, true);
+    }
 }
 
 
@@ -63,6 +128,7 @@ bool ReadyToStartMatch(AFortGameModeAthena* _this)
         _this->WarmupRequiredPlayerCount = 1;
 
         GameState->CurrentPlaylistInfo.BasePlaylist = Playlist;
+        ConfigureInfiniteRespawn(Playlist);
         //GameState->CurrentPlaylistInfo.OverridePlaylist = PlaylistObj;
         GameState->CurrentPlaylistInfo.BasePlaylist->GarbageCollectionFrequency = 9999999999999999.f;
 
@@ -85,10 +151,18 @@ bool ReadyToStartMatch(AFortGameModeAthena* _this)
 
         _this->AISettings = Playlist->AISettings.Get();
 
-        if (_this->AISettings && !_this->AISettings->AIServices[1])
-            _this->AISettings->AIServices[1] = UAthenaAIServicePlayerBots::StaticClass();
+        if (_this->AISettings)
+        {
+            while (_this->AISettings->AIServices.Num() < 2)
+            {
+                _this->AISettings->AIServices.Add(nullptr);
+            }
+            if (!_this->AISettings->AIServices[1])
+                _this->AISettings->AIServices[1] = UAthenaAIServicePlayerBots::StaticClass();
+        }
 
-        ((UAthenaAISystem*)GetWorld()->AISystem)->AIPopulationTracker = (UAthenaAIPopulationTracker*)UGameplayStatics::SpawnObject(UAthenaAIPopulationTracker::StaticClass(), GetWorld()->AISystem);
+        if (GetWorld()->AISystem)
+            ((UAthenaAISystem*)GetWorld()->AISystem)->AIPopulationTracker = (UAthenaAIPopulationTracker*)UGameplayStatics::SpawnObject(UAthenaAIPopulationTracker::StaticClass(), GetWorld()->AISystem);
 
         _this->DefaultPawnClass = FindObject<UClass>(L"/Game/Athena/PlayerPawn_Athena.PlayerPawn_Athena_C");
 
@@ -139,20 +213,12 @@ bool ReadyToStartMatch(AFortGameModeAthena* _this)
     auto CountReadyPlayers = (int32_t (*)(AFortGameModeAthena*))(ImageBase + 0x917E138);
     auto AreAllAdditionalPlaylistLevelsVisible = (bool (*)(AFortGameStateAthena*))(ImageBase + 0x9A52B40);
 
-    TArray<FPlaylistStreamedLevelData>& AdditonalPlaylistLevels = *(TArray<FPlaylistStreamedLevelData>*)(__int64(GameState) + 0x430);
+    bool bAllAdditionalLevelsVisible = true;
+    if (GameState->AdditionalPlaylistLevelsStreamed.Num() > 0)
+        bAllAdditionalLevelsVisible = AreAllAdditionalPlaylistLevelsVisible(GameState);
 
-    bool bAllLevelsFinishedStreaming = true;
-    for (auto& Something : AdditonalPlaylistLevels)
-    {
-        if (!Something.bIsFinishedStreaming)
-        {
-            bAllLevelsFinishedStreaming = false;
-            break;
-        }
-    }
-
-    return _this->bWorldIsReady && GameState->bPlaylistDataIsLoaded && _this->MatchState == WaitingToStart && bAllLevelsFinishedStreaming && !GameState->bInSpawningStartup
-        && AreAllAdditionalPlaylistLevelsVisible(GameState) && CountReadyPlayers(_this) >= _this->WarmupRequiredPlayerCount;
+    return _this->bWorldIsReady && GameState->bPlaylistDataIsLoaded && _this->MatchState == WaitingToStart && !GameState->bInSpawningStartup
+        && bAllAdditionalLevelsVisible && CountReadyPlayers(_this) >= _this->WarmupRequiredPlayerCount;
     //return _this->AlivePlayers.Num() > 0;
 }
 
@@ -191,9 +257,26 @@ void FinishWorldInitialization(AFortGameModeAthena* _this)
 
 
     auto PlaylistObj = GameState->CurrentPlaylistInfo.BasePlaylist;
+    if (!PlaylistObj)
+    {
+        PlaylistObj = FindObject<UFortPlaylistAthena>(bEvent ? L"/QuailPlaylist/Playlist/Playlist_Quail.Playlist_Quail" : Playlist.c_str());
+        if (!PlaylistObj)
+            PlaylistObj = FindObject<UFortPlaylistAthena>(L"/BRPlaylists/Athena/Playlists/Playlist_DefaultSolo.Playlist_DefaultSolo");
+        if (!PlaylistObj)
+            PlaylistObj = FindObject<UFortPlaylistAthena>(L"/Game/Athena/Playlists/Playlist_DefaultSolo.Playlist_DefaultSolo");
+    }
+
+    if (!PlaylistObj)
+    {
+        printf("[Remix] Error: Critical - No valid playlist object could be loaded in FinishWorldInitialization!\n");
+        return;
+    }
 
     auto AddToTierData = [&](UDataTable* Table, UEAllocatedVector<FFortLootTierData*>& TempArr)
     {
+        if (!Table)
+            return;
+
         printf("LootTierData: %s\n", Table->Name.ToString().c_str());
 
         if (auto CompositeTable = Table->Cast<UCompositeDataTable>())
@@ -212,6 +295,9 @@ void FinishWorldInitialization(AFortGameModeAthena* _this)
 
     auto AddToPackages = [&](UDataTable* Table, UEAllocatedVector<FFortLootPackageData*>& TempArr)
     {
+        if (!Table)
+            return;
+
         printf("LootPackages: %s\n", Table->Name.ToString().c_str());
 
         if (auto CompositeTable = Table->Cast<UCompositeDataTable>())
@@ -247,7 +333,7 @@ void FinishWorldInitialization(AFortGameModeAthena* _this)
     //    LootPackages = FindObject<UDataTable>(L"/Game/Items/Datatables/AthenaLootPackages_Client.AthenaLootPackages_Client");
     if (!LootPackages)
         for (auto& LootPackagesBR : GetGameData()->LootPackageDataTablesBR)
-            AddToTierData(LootPackagesBR.Get(), LootTierDataTempArr);
+            AddToPackages(LootPackagesBR.Get(), LootPackageTempArr);
     else
         AddToPackages(LootPackages, LootPackageTempArr);
     for (auto& Val : LootPackageTempArr)
@@ -266,7 +352,7 @@ void FinishWorldInitialization(AFortGameModeAthena* _this)
 
             auto GameFeatureData = GetFeatureDataIfActive(StateMachine);
 
-            if (!GameFeatureData->Cast<UFortGameFeatureData>())
+            if (!GameFeatureData || !GameFeatureData->Cast<UFortGameFeatureData>())
                 continue;
 
             auto LootTableData = GameFeatureData->DefaultLootTableData;
@@ -320,7 +406,7 @@ void FinishWorldInitialization(AFortGameModeAthena* _this)
 
     SpawnFloorLootForContainer(FindObject<UClass>(L"/Game/Athena/Environments/Blueprints/Tiered_Athena_FloorLoot_01.Tiered_Athena_FloorLoot_01_C"));
 
-    if (GameState->CurrentPlaylistInfo.BasePlaylist->GameType == EFortGameType::BlastBerry)
+    if (GameState->CurrentPlaylistInfo.BasePlaylist && GameState->CurrentPlaylistInfo.BasePlaylist->GameType == EFortGameType::BlastBerry)
     {
         int Spawned = 0;
         for (auto& Loc : ReloadFloorLootPositions)
@@ -338,46 +424,50 @@ void FinishWorldInitialization(AFortGameModeAthena* _this)
 
     GameState->DefaultParachuteDeployTraceForGroundDistance = 10000;
 
+    ResolveMapInfo(GameState);
     if (GameState->MapInfo)
     {
         auto GamePhaseLogic = UFortGameStateComponent_BattleRoyaleGamePhaseLogic::Get(_this);
 
         auto& SafeZoneLocations = *(TArray<FVector>*)(__int64(GamePhaseLogic) + 0x458);
 
-        auto SafeZoneBlacklist = PlaylistObj->SafeZoneLocationBlacklist.Get();
+        auto SafeZoneBlacklist = PlaylistObj ? PlaylistObj->SafeZoneLocationBlacklist.Get() : nullptr;
 
         if (!SafeZoneBlacklist)
             SafeZoneBlacklist = FindObject<UCurveTable>(L"/Game/Athena/Balance/DataTables/AthenaSafeZoneBlacklist.AthenaSafeZoneBlacklist");
 
-        auto& SZBCurve = *(TMap<FName, FRealCurve*>*)(__int64(SafeZoneBlacklist) + 0x30);
-
         TArray<FVector4> BlacklistLocations;
 
-        for (auto& [Key, Curve] : SZBCurve)
+        if (SafeZoneBlacklist)
         {
-            FSimpleCurve* Row = (FSimpleCurve*)Curve;
+            auto& SZBCurve = *(TMap<FName, FRealCurve*>*)(__int64(SafeZoneBlacklist) + 0x30);
 
-            if (!Row)
-                continue;
-
-            FVector4 Loc {};
-
-            for (auto& Key : Row->Keys)
+            for (auto& [Key, Curve] : SZBCurve)
             {
-                if (Key.time == 0.f)
-                    Loc.X = Key.Value;
-                else if (Key.time == 1.f)
-                    Loc.Y = Key.Value;
-                else if (Key.time == 2.f)
-                    Loc.Z = Key.Value;
-                else if (Key.time == 3.f)
-                    Loc.W = Key.Value;
+                FSimpleCurve* Row = (FSimpleCurve*)Curve;
+
+                if (!Row)
+                    continue;
+
+                FVector4 Loc {};
+
+                for (auto& Key : Row->Keys)
+                {
+                    if (Key.time == 0.f)
+                        Loc.X = Key.Value;
+                    else if (Key.time == 1.f)
+                        Loc.Y = Key.Value;
+                    else if (Key.time == 2.f)
+                        Loc.Z = Key.Value;
+                    else if (Key.time == 3.f)
+                        Loc.W = Key.Value;
+                }
+
+                if (Loc.X == 0 && Loc.Y == 0 && Loc.Z == 0 && Loc.W == 0)
+                    continue;
+
+                BlacklistLocations.Add(Loc);
             }
-
-            if (Loc.X == 0 && Loc.Y == 0 && Loc.Z == 0 && Loc.W == 0)
-                continue;
-
-            BlacklistLocations.Add(Loc);
         }
 
         auto ZeroVector = FVector(0, 0, 0);
@@ -392,12 +482,18 @@ void FinishWorldInitialization(AFortGameModeAthena* _this)
         // while (true)
         //     ;
         SafeZoneLocations.Clear();
-        SafeZoneLocations.Reserve((int)SafeZoneCount);
+        int SafeZoneCountInt = (int)SafeZoneCount;
+        if (SafeZoneCountInt < 0)
+            SafeZoneCountInt = 0;
+
+        SafeZoneLocations.Reserve(SafeZoneCountInt);
+        for (int i = 0; i < SafeZoneCountInt; i++)
+            SafeZoneLocations.Add(ZeroVector);
 
         // printf("[GameModeModule] SafeZoneCount: %lf\n", SafeZoneCount);
-        for (int i = (int)(SafeZoneCount - 1); i >= 0; i--)
+        for (int i = SafeZoneCountInt - 1; i >= 0; i--)
         {
-            auto Params = GameState->MapInfo->ConstructSafeZoneLocationParams(i, Center, i == SafeZoneCount - 1 ? ZeroVector : SafeZoneLocations[i + 1], i == SafeZoneCount - 1, 0);
+            auto Params = GameState->MapInfo->ConstructSafeZoneLocationParams(i, Center, i == SafeZoneCountInt - 1 ? ZeroVector : SafeZoneLocations[i + 1], i == SafeZoneCountInt - 1, 0);
 
             auto Location = GameState->MapInfo->PickSafeZoneLocation(Params, BlacklistLocations);
 
@@ -600,6 +696,9 @@ void HandleMatchHasStarted(AFortGameMode* _this)
     auto GameState = (AFortGameStateAthena*)_this->GameState;
     auto GameMode = (AFortGameModeAthena*)_this;
 
+    if (!GamePhaseLogic || !GameState)
+        return;
+
     auto Time = (float)UGameplayStatics::GetTimeSeconds(GetWorld());
     auto WarmupDuration = 60.f;
 
@@ -615,44 +714,67 @@ void HandleMatchHasStarted(AFortGameMode* _this)
     for (auto& Player : GameMode->AlivePlayers)
         Player->bBuildFree = true;
 
+    if (bInfiniteRespawn)
+    {
+        // Prevent disconnect-after-death when using infinite respawn
+        GameMode->ForceKickAfterDeathMode = EForceKickAfterDeathMode::Disabled;
+        GameMode->bIgnoreCanSpectateAfterDeathToken = true;
+    }
+
     if (GamePhaseLogic->AirCraftBehavior != EAirCraftBehavior::NoAircraft)
     {
-        int TeamCount = 1;
-
-        if (GamePhaseLogic->AirCraftBehavior == EAirCraftBehavior::OpposingAirCraftForEachTeam)
-            TeamCount = GameState->TeamCount;
-
-        for (int i = 0; i < TeamCount; i++)
+        auto MapInfo = ResolveMapInfo(GameState);
+        if (!MapInfo)
         {
-            auto& FlightInfo = GameState->MapInfo->FlightInfos[i];
+            printf("[Remix] Warning: MapInfo unavailable in HandleMatchHasStarted - skipping aircraft spawn.\n");
+        }
+        else
+        {
+            EnsureFlightPathInitialized(MapInfo, GameState, GamePhaseLogic);
 
-            if (bLateGame)
+            int TeamCount = 1;
+
+            if (GamePhaseLogic->AirCraftBehavior == EAirCraftBehavior::OpposingAirCraftForEachTeam)
+                TeamCount = GameState->TeamCount;
+
+            for (int i = 0; i < TeamCount; i++)
             {
-                auto& SafeZoneLocations = *(TArray<FVector>*)(__int64(GamePhaseLogic) + 0x458);
-                FVector Zone6Center = SafeZoneLocations.Num() > 5 ? SafeZoneLocations[5] : GameState->MapInfo->GetMapCenter();
-                Zone6Center.Z = 17500.f;
+                if (!MapInfo->FlightInfos.IsValidIndex(i))
+                {
+                    printf("[Remix] Warning: FlightInfos[%d] missing - skipping aircraft spawn.\n", i);
+                    break;
+                }
 
-                FlightInfo.FlightSpeed = 0.f;
-                FlightInfo.FlightStartLocation.X = Zone6Center.X;
-                FlightInfo.FlightStartLocation.Y = Zone6Center.Y;
-                FlightInfo.FlightStartLocation.Z = Zone6Center.Z;
-                FlightInfo.TimeTillFlightEnd = 7.f;
-                FlightInfo.TimeTillDropEnd = 7.f;
-                FlightInfo.TimeTillDropStart = 0.f;
+                auto& FlightInfo = MapInfo->FlightInfos[i];
+
+                if (bLateGame)
+                {
+                    auto& SafeZoneLocations = *(TArray<FVector>*)(__int64(GamePhaseLogic) + 0x458);
+                    FVector Zone6Center = SafeZoneLocations.Num() > 5 ? SafeZoneLocations[5] : MapInfo->GetMapCenter();
+                    Zone6Center.Z = 17500.f;
+
+                    FlightInfo.FlightSpeed = 0.f;
+                    FlightInfo.FlightStartLocation.X = Zone6Center.X;
+                    FlightInfo.FlightStartLocation.Y = Zone6Center.Y;
+                    FlightInfo.FlightStartLocation.Z = Zone6Center.Z;
+                    FlightInfo.TimeTillFlightEnd = 7.f;
+                    FlightInfo.TimeTillDropEnd = 7.f;
+                    FlightInfo.TimeTillDropStart = 0.f;
+                }
+
+                if (!MapInfo->AircraftClass)
+                    break;
+
+                auto Aircraft = AFortAthenaAircraft::SpawnAircraft(GetWorld(), MapInfo->AircraftClass, FlightInfo, _this);
+
+                if (!Aircraft)
+                    break;
+
+                Aircraft->AircraftIndex = i;
+
+                GamePhaseLogic->Aircrafts_GameMode.Add(Aircraft);
+                GamePhaseLogic->Aircrafts_GameState.Add(Aircraft);
             }
-
-            if (!GameState->MapInfo->AircraftClass)
-                return;
-
-            auto Aircraft = AFortAthenaAircraft::SpawnAircraft(GetWorld(), GameState->MapInfo->AircraftClass, FlightInfo, _this);
-
-            Aircraft->AircraftIndex = i;
-
-            if (!Aircraft)
-                return;
-
-            GamePhaseLogic->Aircrafts_GameMode.Add(Aircraft);
-            GamePhaseLogic->Aircrafts_GameState.Add(Aircraft);
         }
     }
 
@@ -787,7 +909,7 @@ uint8_t PickTeam(AFortGameMode* GameMode, uint8_t PreferredTeam, AFortPlayerCont
     uint8_t ret = CurrentTeam;
     auto Playlist = ((AFortGameStateAthena*)GameMode->GameState)->CurrentPlaylistInfo.BasePlaylist;
 
-    if (Playlist->bIsLargeTeamGame)
+    if (Playlist && Playlist->bIsLargeTeamGame)
     {
         if (CurrentTeam == 4)
             CurrentTeam = 3;

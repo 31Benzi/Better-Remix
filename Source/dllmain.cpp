@@ -1,19 +1,168 @@
 // dllmain.cpp : Defines the entry point for the DLL application.
 #include "pch.h"
 #include <thread>
+#include <string>
+#include <algorithm>
 #include "Shared.h"
 #include "memcury.h"
 #include "CurlHttp.h"
 #include "Config.h"
 #include "GUI.h"
 
+// Check if a UObject's package path contains a blocked prefix (e.g. /DebugUI/).
+// Objects under these paths have missing super-structs and crash when loaded.
+static bool IsBlockedPackagePath(UObject* Object)
+{
+    if (!Object || !Object->Class)
+        return false;
+
+    // Walk the Outer chain to find the outermost package
+    UObject* Outer = Object;
+    while (Outer->Outer)
+        Outer = Outer->Outer;
+
+    auto PkgName = Outer->Name.ToString();
+
+    // Block /DebugUI/ packages – their widget BPs reference missing super-structs
+    // and cause CreateExport failures -> crash
+    if (PkgName.find("DebugUI") != std::string::npos)
+        return true;
+
+    return false;
+}
+
 void ClientThread();
 
 void CrashReporter__Init();
 
+// Activates a GameFeature plugin by short name (e.g. L"PunchBerry").
+// Some playlists (Reload Oasis, etc.) live in plugins that are NOT auto-activated
+// by FortGameFeaturePluginManager; their content registry is therefore not mounted
+// and `open <Map>` fails with "not a child of an existing mount point",
+// which the client eventually surfaces as "Network Connection Lost".
+static void ActivateGameFeaturePlugin(const wchar_t* FeatureName)
+{
+    if (!FeatureName || !*FeatureName)
+        return;
+
+    auto CheatManagerCDO = UFortCheatManager::GetDefaultObj();
+    if (!CheatManagerCDO)
+    {
+        printf("[Remix] ActivateGameFeaturePlugin(%ls): CheatManager CDO unavailable.\n", FeatureName);
+        return;
+    }
+
+    printf("[Remix] Activating GameFeature plugin: %ls\n", FeatureName);
+    CheatManagerCDO->LoadAndActivateGameFeaturePluginViaFeatureName(FString(FeatureName));
+}
+
+// Try to find the playlist asset, repeatedly, while its content plugin is still mounting.
+static UFortPlaylistAthena* WaitForPlaylistAsset(const std::wstring& PlaylistPath, int MaxAttempts = 20, int SleepMs = 250)
+{
+    for (int attempt = 0; attempt < MaxAttempts; ++attempt)
+    {
+        auto Obj = FindObject<UFortPlaylistAthena>(PlaylistPath.c_str());
+        if (Obj)
+        {
+            if (attempt > 0)
+                printf("[Remix] Playlist asset resolved after %d attempt(s): %ls\n", attempt + 1, PlaylistPath.c_str());
+            return Obj;
+        }
+        Sleep(SleepMs);
+    }
+    printf("[Remix] Playlist asset not found after %d attempts: %ls\n", MaxAttempts, PlaylistPath.c_str());
+    return nullptr;
+}
+
+// Diagnostic: dump every package whose name contains `Needle` (case-insensitive).
+static void LogPackagesMatching(const std::wstring& Needle)
+{
+    std::wstring lowerNeedle = Needle;
+    std::transform(lowerNeedle.begin(), lowerNeedle.end(), lowerNeedle.begin(), ::towlower);
+
+    int found = 0;
+    for (uint32_t i = 0; i < TUObjectArray::Num(); ++i)
+    {
+        auto Obj = TUObjectArray::GetObjectByIndex(i);
+        if (!Obj || !Obj->Class)
+            continue;
+
+        auto ClassName = Obj->Class->Name.ToString();
+        if (ClassName != "Package")
+            continue;
+
+        auto Name = Obj->Name.ToString();
+        std::wstring NameW(Name.begin(), Name.end());
+        std::wstring lowerName = NameW;
+        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::towlower);
+        if (lowerName.find(lowerNeedle) != std::wstring::npos)
+        {
+            printf("[Remix]   Package match: %ls\n", NameW.c_str());
+            if (++found >= 20)
+            {
+                printf("[Remix]   (truncated after 20 matches)\n");
+                break;
+            }
+        }
+    }
+    if (found == 0)
+        printf("[Remix]   No mounted packages contain '%ls'.\n", Needle.c_str());
+}
+
+// Resolve the actual on-disk map URL by reading PreloadPersistentLevel from the
+// playlist asset, and activate any plugins the playlist declares it needs.
+// Returns an empty string if resolution failed; caller should fall back.
+static std::wstring PrepareAndResolveMapURL(const std::wstring& PlaylistPath, const std::wstring& FallbackShortName)
+{
+    auto Playlist = WaitForPlaylistAsset(PlaylistPath);
+    if (!Playlist)
+        return L"";
+
+    printf("[Remix] Playlist '%ls' has %d required GameFeature plugin(s):\n",
+        PlaylistPath.c_str(), Playlist->BuiltInGameFeaturePluginsToLoad.Num());
+    for (auto& Name : Playlist->BuiltInGameFeaturePluginsToLoad)
+    {
+        auto NameStr = Name.ToWString();
+        printf("[Remix]   - %ls\n", NameStr.c_str());
+        ActivateGameFeaturePlugin(NameStr.c_str());
+    }
+
+    // Also activate via raw plugin URL list (some playlists use this instead).
+    for (auto& Url : Playlist->GameFeaturePluginURLsToLoad)
+    {
+        auto UrlStr = Url.ToWString();
+        if (UrlStr.empty())
+            continue;
+        printf("[Remix]   Activating plugin URL: %ls\n", UrlStr.c_str());
+        UFortCheatManager::GetDefaultObj()->LoadAndActivateGameFeaturePlugin(FString(UrlStr.c_str()));
+    }
+
+    auto PackageName = Playlist->PreloadPersistentLevel.ObjectID.AssetPath.PackageName.ToString();
+    std::wstring MapURL(PackageName.begin(), PackageName.end());
+
+    if (MapURL.empty())
+    {
+        printf("[Remix] Playlist PreloadPersistentLevel is empty; will fall back to '%ls'.\n", FallbackShortName.c_str());
+        LogPackagesMatching(FallbackShortName);
+        return L"";
+    }
+
+    printf("[Remix] Playlist PreloadPersistentLevel: %ls\n", MapURL.c_str());
+    return MapURL;
+}
+
 void Main(HMODULE hModule)
 {
     CrashReporter__Init();
+
+    if (bEnableConsole)
+    {
+        AllocConsole();
+        FILE* pFile;
+        freopen_s(&pFile, "CONOUT$", "w", stdout);
+        freopen_s(&pFile, "CONOUT$", "w", stderr);
+        freopen_s(&pFile, "CONIN$", "r", stdin);
+    }
 
     if (bGUI)
     {
@@ -94,11 +243,25 @@ void Main(HMODULE hModule)
         if (Object == NULL || !Object->IsDefaultObject())
             continue;
 
+        if (IsBlockedPackagePath(Object))
+        {
+            VirtualSwap(Object->VTable, 0x36, ReturnFalse); // NeedsLoadForClient
+            if (Object->IsA<AActor>())
+            {
+                auto Actor = (AActor*)Object;
+                Actor->bReplicates = false;
+                Actor->bAlwaysRelevant = false;
+            }
+            continue;
+        }
+
         VirtualSwap(Object->VTable, 0x36, ReturnTrue); // NeedsLoadForClient
     }
 
     UKismetSystemLibrary::ExecuteConsoleCommand(GetWorld(), L"log LogFortUIDirector None", nullptr);
     UKismetSystemLibrary::ExecuteConsoleCommand(GetWorld(), L"log LogFortUIManager None", nullptr);
+    // Suppress DebugUI streaming errors that cause crash cascades on Quail playlist
+    UKismetSystemLibrary::ExecuteConsoleCommand(GetWorld(), L"log LogStreaming Error", nullptr);
 
     ////GetWorld()->OwningGameInstance->LocalPlayers.Remove(0);
     ////
@@ -123,15 +286,15 @@ void Main(HMODULE hModule)
 
             if (wParsed.find(L"/") == std::wstring::npos)
             {
-                if (wParsed == L"Playlist_Quail")
+                if (wParsed == L"Playlist_Quail" || wParsed == L"playlist_quail")
                     Playlist = L"/QuailPlaylist/Playlist/Playlist_Quail.Playlist_Quail";
-                else if (wParsed == L"Playlist_SunflowerSolo")
+                else if (wParsed == L"Playlist_SunflowerSolo" || wParsed == L"playlist_sunflowersolo")
                     Playlist = L"/BlastBerry/Playlists/Playlist_SunflowerSolo.Playlist_SunflowerSolo";
-                else if (wParsed == L"Playlist_PunchBerrySolo")
+                else if (wParsed == L"Playlist_PunchBerrySolo" || wParsed == L"playlist_punchberrysolo")
                     Playlist = L"/BlastBerry/Playlists/Playlist_PunchBerrySolo.Playlist_PunchBerrySolo";
-                else if (wParsed == L"Playlist_Respawn_24")
+                else if (wParsed == L"Playlist_Respawn_24" || wParsed == L"playlist_respawn_24")
                     Playlist = L"/Rumble/Playlists/Playlist_Respawn_24.Playlist_Respawn_24";
-                else if (wParsed == L"Playlist_DefaultSolo")
+                else if (wParsed == L"Playlist_DefaultSolo" || wParsed == L"playlist_defaultsolo")
                     Playlist = L"/BRPlaylists/Athena/Playlists/Playlist_DefaultSolo.Playlist_DefaultSolo";
                 else
                 {
@@ -147,19 +310,28 @@ void Main(HMODULE hModule)
         }
     }
 
-    std::wstring startupMap = L"BlastBerry_Terrain";
+    // Hardcoded fallback short names (used only if reading the playlist asset fails).
+    std::wstring fallbackMap = L"BlastBerry_Terrain";
     if (Playlist == L"/QuailPlaylist/Playlist/Playlist_Quail.Playlist_Quail")
-        startupMap = L"Quail";
+        fallbackMap = L"Apollo_Terrain_Retro";
     else if (Playlist == L"/BlastBerry/Playlists/Playlist_SunflowerSolo.Playlist_SunflowerSolo")
-        startupMap = L"BlastBerry_Terrain";
+        fallbackMap = L"BlastBerry_Terrain";
     else if (Playlist == L"/BlastBerry/Playlists/Playlist_PunchBerrySolo.Playlist_PunchBerrySolo")
-        startupMap = L"PunchBerry_Terrain";
+        fallbackMap = L"PunchBerry_Terrain";
     else if (Playlist == L"/Rumble/Playlists/Playlist_Respawn_24.Playlist_Respawn_24")
-        startupMap = L"Apollo_Terrain_Retro";
+        fallbackMap = L"Apollo_Terrain_Retro";
     else if (Playlist == L"/BRPlaylists/Athena/Playlists/Playlist_DefaultSolo.Playlist_DefaultSolo")
-        startupMap = L"Apollo_Terrain_Retro";
+        fallbackMap = L"Apollo_Terrain_Retro";
+
+    // Read the actual map URL from the playlist asset (and activate any plugins it requires).
+    // This is the source of truth and avoids relying on short-name lookups.
+    auto effectivePlaylist = bEvent ? std::wstring(L"/QuailPlaylist/Playlist/Playlist_Quail.Playlist_Quail") : Playlist;
+    std::wstring startupMap = PrepareAndResolveMapURL(effectivePlaylist, fallbackMap);
+    if (startupMap.empty())
+        startupMap = fallbackMap;
 
     std::wstring openCmd = L"open " + startupMap;
+    printf("[Remix] Executing console command: %ls\n", openCmd.c_str());
     UKismetSystemLibrary::ExecuteConsoleCommand(GetWorld(), openCmd.c_str(), nullptr);
 
     //APlayerController* LocalPlayer = GetWorld()->OwningGameInstance->LocalPlayers[0]->PlayerController;

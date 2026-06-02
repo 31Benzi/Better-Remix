@@ -2,6 +2,8 @@
 #include "Shared.h"
 #include "GUI.h"
 #include "Config.h"
+#include "HostAdmin.h"
+#include "Inventory.h"
 #include "../ThirdParty/ImGui/imgui.h"
 #include "../ThirdParty/ImGui/imgui_impl_dx11.h"
 #include "../ThirdParty/ImGui/imgui_impl_win32.h"
@@ -464,6 +466,9 @@ void GUI::Init()
                 renderNavButton("Events", 2, SelectedUI);
                 ImGui::Spacing();
             }
+
+            renderNavButton("Host Admin", 4, SelectedUI);
+            ImGui::Spacing();
         }
 
         renderNavButton("Misc", 3, SelectedUI);
@@ -606,37 +611,12 @@ void GUI::Init()
 
             if (ImGui::Button("Start Event", ImVec2(-1, 40)))
             {
-                TArray<AActor*> MeshActors;
-                UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASpecialEventScriptMeshActor::StaticClass(), &MeshActors);
-
-                TArray<AActor*> EventScripts;
-                UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASpecialEventScript::StaticClass(), &EventScripts);
-
-                if (MeshActors.Num() > 0 && EventScripts.Num() > 0)
-                {
-                    auto MeshActor = (ASpecialEventScriptMeshActor*)MeshActors[0];
-                    auto Scr = (ASpecialEventScript*)EventScripts[0];
-
-                    Scr->DelayAfterConentLoad.Curve.CurveTable = nullptr;
-                    Scr->DelayAfterConentLoad.Value = 0.6f;
-
-                    auto MeshNetworkSubsystem = (UMeshNetworkSubsystem*)TUObjectArray::FindFirstObject("MeshNetworkSubsystem");
-
-                    if (MeshNetworkSubsystem)
-                        MeshNetworkSubsystem->NodeType = EMeshNetworkNodeType::Root;
-
-                    MeshActor->MeshRootStartEvent();
-
-                    if (MeshNetworkSubsystem)
-                        MeshNetworkSubsystem->NodeType = EMeshNetworkNodeType::Edge;
-                    MeshActor->OnRep_RootStartTime(FDateTime());
-                }
-                MeshActors.Free();
-                EventScripts.Free();
+                StartSpecialEventSequence();
             }
             ImGui::EndChild();
             break;
         case 3:
+        {
             ImGui::BeginChild("GameplayModifiers", ImVec2(0, 195 * main_scale), true);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 1.00f, 1.00f, 1.00f));
             ImGui::Text("GAMEPLAY MODIFIERS");
@@ -650,7 +630,26 @@ void GUI::Init()
             ImGui::NextColumn();
             ImGui::Checkbox("Keep Inventory", &bKeepInventory);
             ImGui::Checkbox("No Fall Damage", &bNoFallDamage);
+            
+            bool isReload = GetActiveGamemodeName().find("Reload") != std::string::npos;
+            if (isReload)
+            {
+                bInfiniteRespawn = false;
+                ImGui::BeginDisabled();
+            }
+            ImGui::Checkbox("Infinite Respawn", &bInfiniteRespawn);
+            if (isReload)
+            {
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("Infinite Respawn cannot be enabled in Reload gamemodes.");
+            }
             ImGui::Columns(1);
+
+            if (bInfiniteRespawn)
+            {
+                ImGui::SliderFloat("Respawn Delay (sec)", &RespawnDelaySeconds, 1.f, 15.f, "%.1f");
+            }
 
             ImGui::Spacing();
             ImGui::SliderInt("Siphon Amount", &SiphonAmount, 0, 200);
@@ -691,7 +690,127 @@ void GUI::Init()
             }
             ImGui::PopStyleColor(3);
             ImGui::EndChild();
+        }
             break;
+        case 4:
+        {
+            ImGui::BeginChild("HostAdmin", ImVec2(0, 0), true);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 1.00f, 1.00f, 1.00f));
+            ImGui::Text("HOST ADMIN");
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            static int SelectedPlayer = 0;
+            static int SelectedWeapon = 0;
+            static int GiveCount = 1;
+            static char CustomWeaponPath[512] = "/Game/Athena/Items/Weapons/WID_Assault_AutoHigh_Athena_SR_Ore_T03.WID_Assault_AutoHigh_Athena_SR_Ore_T03";
+
+            struct FAdminWeaponPreset
+            {
+                const char* Label;
+                const wchar_t* Path;
+            };
+
+            static const FAdminWeaponPreset WeaponPresets[] = {
+                { "SCAR (Legendary)", L"/Game/Athena/Items/Weapons/WID_Assault_AutoHigh_Athena_SR_Ore_T03.WID_Assault_AutoHigh_Athena_SR_Ore_T03" },
+                { "Pump Shotgun (Legendary)", L"/Game/Athena/Items/Weapons/WID_Shotgun_Standard_Athena_SR_Ore_T03.WID_Shotgun_Standard_Athena_SR_Ore_T03" },
+                { "Bolt Sniper", L"/Game/Athena/Items/Weapons/WID_Sniper_BoltAction_Scope_Athena_SR_Ore_T03.WID_Sniper_BoltAction_Scope_Athena_SR_Ore_T03" },
+                { "Tactical SMG (Epic)", L"/Game/Athena/Items/Weapons/WID_Pistol_Scavenger_Athena_VR_Ore_T03.WID_Pistol_Scavenger_Athena_VR_Ore_T03" },
+                { "Big Shield Pot", L"/Game/Athena/Items/Consumables/Shields/Athena_Shields.Athena_Shields" },
+                { "Minis", L"/Game/Athena/Items/Consumables/ShieldSmall/Athena_ShieldSmall.Athena_ShieldSmall" },
+                { "Wood (500)", nullptr },
+            };
+
+            auto Players = GetHostAdminPlayerListSnapshot();
+
+            if (Players.empty())
+            {
+                ImGui::TextWrapped("No connected players. Players appear here once they join the match.");
+            }
+            else
+            {
+                if (SelectedPlayer >= (int)Players.size())
+                    SelectedPlayer = 0;
+
+                ImGui::Text("Select Player");
+                if (ImGui::BeginCombo("##HostPlayer", Players[SelectedPlayer].DisplayName.c_str()))
+                {
+                    for (int i = 0; i < (int)Players.size(); i++)
+                    {
+                        bool Selected = (SelectedPlayer == i);
+                        if (ImGui::Selectable(Players[i].DisplayName.c_str(), Selected))
+                            SelectedPlayer = i;
+                        if (Selected)
+                            ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+
+                ImGui::Spacing();
+                ImGui::Text("Give Weapon / Item");
+                if (SelectedWeapon >= IM_ARRAYSIZE(WeaponPresets))
+                    SelectedWeapon = 0;
+
+                if (ImGui::BeginCombo("##HostWeapon", WeaponPresets[SelectedWeapon].Label))
+                {
+                    for (int i = 0; i < IM_ARRAYSIZE(WeaponPresets); i++)
+                    {
+                        bool Selected = (SelectedWeapon == i);
+                        if (ImGui::Selectable(WeaponPresets[i].Label, Selected))
+                            SelectedWeapon = i;
+                        if (Selected)
+                            ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+
+                ImGui::InputTextWithHint("##CustomWeapon", "Custom item path (optional override)", CustomWeaponPath, 512);
+                ImGui::SliderInt("Count", &GiveCount, 1, 500);
+
+                ImGui::Spacing();
+                if (ImGui::Button("Give to Player", ImVec2(-1, 35)))
+                {
+                    auto Target = Players[SelectedPlayer].Controller;
+                    UFortItemDefinition* ItemDef = nullptr;
+
+                    if (strlen(CustomWeaponPath) > 4)
+                    {
+                        std::wstring CustomPath(CustomWeaponPath, CustomWeaponPath + strlen(CustomWeaponPath));
+                        ItemDef = FindObject<UFortItemDefinition>(CustomPath.c_str());
+                        if (!ItemDef)
+                            ItemDef = (UFortItemDefinition*)TUObjectArray::FindObject(CustomWeaponPath, UFortItemDefinition::StaticClass());
+                    }
+                    else if (WeaponPresets[SelectedWeapon].Path)
+                    {
+                        ItemDef = FindObject<UFortItemDefinition>(WeaponPresets[SelectedWeapon].Path);
+                    }
+                    else
+                    {
+                        ItemDef = UFortKismetLibrary::K2_GetResourceItemDefinition(EFortResourceType::Wood);
+                    }
+
+                    if (ItemDef)
+                        QueueHostGiveItem(Target, ItemDef, GiveCount);
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.15f, 0.15f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.18f, 0.18f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.20f, 0.20f, 1.00f));
+                if (ImGui::Button("Kick Player", ImVec2(-1, 35)))
+                {
+                    QueueHostKickPlayer(Players[SelectedPlayer].Controller);
+                }
+                ImGui::PopStyleColor(3);
+            }
+
+            ImGui::EndChild();
+            break;
+        }
         }
         ImGui::EndChild();
 

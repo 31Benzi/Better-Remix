@@ -43,12 +43,15 @@ void RemixConsole::Init()
     }
 
     // Custom play list modifier for respawns if requested
-    for (int i = 0; i < TUObjectArray::Num(); i++)
+    for (uint32_t i = 0; i < TUObjectArray::Num(); i++)
     {
         auto Object = TUObjectArray::GetObjectByIndex(i);
         if (Object && Object->IsA(UFortPlaylistAthena::StaticClass()))
         {
             auto Playlist = (UFortPlaylistAthena*)Object;
+
+            if (Playlist->GameType == EFortGameType::BlastBerry)
+                continue;
 
             Playlist->bRespawnInAir = true;
 

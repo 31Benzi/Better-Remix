@@ -5,6 +5,7 @@
 
 UWorld* GetWorld();
 UFortEngine* GetEngine();
+bool StartSpecialEventSequence();
 
 UInterface* GetInterfaceAddress(UObject* Object, UClass* Class);
 template <typename T>
@@ -282,6 +283,49 @@ __forceinline void Patch(uintptr_t ptr, _Is byte)
     VirtualProtect(LPVOID(ptr), sizeof(_Is), PAGE_EXECUTE_READWRITE, &og);
     *(_Is*)ptr = byte;
     VirtualProtect(LPVOID(ptr), sizeof(_Is), og, &og);
+}
+
+inline bool IsReadableAddress(const void* Address, size_t Size = sizeof(void*))
+{
+    if (!Address || Size == 0)
+        return false;
+
+    const auto Ptr = reinterpret_cast<uintptr_t>(Address);
+    if (Ptr < 0x10000 || Ptr == UINTPTR_MAX || Ptr > UINTPTR_MAX - Size)
+        return false;
+
+    MEMORY_BASIC_INFORMATION Info {};
+    if (!VirtualQuery(Address, &Info, sizeof(Info)))
+        return false;
+
+    if (Info.State != MEM_COMMIT || (Info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+        return false;
+
+    const auto RegionStart = reinterpret_cast<uintptr_t>(Info.BaseAddress);
+    const auto RegionEnd = RegionStart + Info.RegionSize;
+    if (RegionEnd < RegionStart)
+        return false;
+
+    return Ptr >= RegionStart && Ptr + Size <= RegionEnd;
+}
+
+inline bool IsValidUObject(const UObject* Object, UClass* ExpectedClass = nullptr)
+{
+    if (!IsReadableAddress(Object, sizeof(UObject)))
+        return false;
+
+    if (!IsReadableAddress(Object->Class, sizeof(UClass)))
+        return false;
+
+    auto MutableObject = const_cast<UObject*>(Object);
+    const int32 ObjectIndex = MutableObject->GetIndex();
+    if (ObjectIndex < 0 || (uint32_t)ObjectIndex >= TUObjectArray::Num())
+        return false;
+
+    if (TUObjectArray::GetObjectByIndex(ObjectIndex) != MutableObject)
+        return false;
+
+    return !ExpectedClass || MutableObject->IsA(ExpectedClass);
 }
 
 inline bool GuidEquals(FGuid Guid, FGuid OtherGuid)

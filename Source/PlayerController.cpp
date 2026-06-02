@@ -531,22 +531,46 @@ void ServerAttemptInventoryDrop(AFortPlayerControllerAthena* _this, FGuid ItemGu
 
 void (*OnPawnDiedOG)(AFortPlayerControllerAthena* PlayerController, AFortPlayerPawnAthena* KilledPawn, double Damage, FGameplayTagContainer* InTags,
     const FGameplayEffectContextHandle* EffectContext, AController* EventInstigator, AActor* DamageCauser, AController* DBNOFinisher);
+
+// Pull player out of spectator so respawn flow can continue (Reload was stuck here when OG ran first).
+static void ClearSpectatorStateForRespawn(AFortPlayerControllerAthena* PlayerController)
+{
+    if (!PlayerController)
+        return;
+
+    static auto SpectatingName = FName(L"Spectating");
+    if (PlayerController->StateName != SpectatingName)
+        return;
+
+    static auto InactiveName = FName(L"Inactive");
+    auto& ChangeState = (void(*&)(AController*, FName))PlayerController->VTable[0xED];
+    ChangeState(PlayerController, InactiveName);
+    PlayerController->ClientGotoState(InactiveName);
+}
+
 void OnPawnDied(AFortPlayerControllerAthena* PlayerController, AFortPlayerPawnAthena* KilledPawn, double Damage, FGameplayTagContainer* InTags,
     const FGameplayEffectContextHandle* EffectContext, AController* EventInstigator, AActor* DamageCauser, AController* DBNOFinisher)
 {
+    if (!PlayerController || !PlayerController->PlayerState)
+        return;
+
     auto DeathLocation = KilledPawn ? KilledPawn->K2_GetActorLocation() :
                         (PlayerController->Pawn ? PlayerController->Pawn->K2_GetActorLocation() : FVector());
 
-    OnPawnDiedOG(PlayerController, KilledPawn, Damage, InTags, EffectContext, EventInstigator, DamageCauser, DBNOFinisher);
-
     auto PlayerState = (AFortPlayerStateAthena*)PlayerController->PlayerState;
 
-    auto KillerPlayerController = EventInstigator->Cast<AFortPlayerControllerAthena>();
+    auto KillerPlayerController = EventInstigator ? EventInstigator->Cast<AFortPlayerControllerAthena>() : nullptr;
     auto KillerPlayerState = KillerPlayerController ? (AFortPlayerStateAthena*) KillerPlayerController->PlayerState : nullptr;
     auto KillerPawn = KillerPlayerController ? (AFortPlayerPawnAthena*) KillerPlayerController->Pawn : nullptr;
 
-    auto GameMode = (AFortGameModeAthena*)GetWorld()->AuthorityGameMode;
+    auto World = GetWorld();
+    if (!World || !World->AuthorityGameMode)
+        return;
+
+    auto GameMode = (AFortGameModeAthena*)World->AuthorityGameMode;
     auto GameState = (AFortGameStateAthena*)GameMode->GameState;
+    if (!GameState)
+        return;
 
     PlayerState->PawnDeathLocation = DeathLocation;
 
@@ -595,18 +619,64 @@ void OnPawnDied(AFortPlayerControllerAthena* PlayerController, AFortPlayerPawnAt
         }
     }
 
-    auto bReload = GameState->CurrentPlaylistInfo.BasePlaylist->GameType == EFortGameType::BlastBerry;
+    auto bReload = GameState->CurrentPlaylistInfo.BasePlaylist && GameState->CurrentPlaylistInfo.BasePlaylist->GameType == EFortGameType::BlastBerry;
     
     bool bRespawnAllowed = false;
     
+    UFortGameStateComponent_BlastBerryManager* BlastBerryManager = nullptr;
     if (bReload)
     {
-        auto BlastBerryManager = (UFortGameStateComponent_BlastBerryManager*)GameState->GetComponentByClass(UFortGameStateComponent_BlastBerryManager::StaticClass());
+        BlastBerryManager = (UFortGameStateComponent_BlastBerryManager*)GameState->GetComponentByClass(UFortGameStateComponent_BlastBerryManager::StaticClass());
 
-        bRespawnAllowed = BlastBerryManager->AreRespawnsActive() && BlastBerryManager->GetTeamLivesRemaining(PlayerState->TeamIndex) > 1;
+        if (BlastBerryManager)
+            bRespawnAllowed = BlastBerryManager->AreRespawnsActive() && BlastBerryManager->GetTeamLivesRemaining(PlayerState->TeamIndex) > 0;
     }
     else
         bRespawnAllowed = GameState->IsRespawningAllowed(PlayerState);
+
+    if (bInfiniteRespawn && !bReload)
+    {
+        bRespawnAllowed = true;
+    }
+
+    if (bRespawnAllowed && PlayerState && (KilledPawn ? !KilledPawn->IsDBNO() : true))
+    {
+        if (PlayerState->Place > 0)
+        {
+            PlayerState->Place = 0;
+            PlayerState->OnRep_Place();
+        }
+
+        PlayerController->bClientNotifiedOfWin = false;
+        PlayerController->bClientNotifiedOfTeamWin = false;
+        PlayerController->bClientNotifiedOfLoss = false;
+
+        FVector RespawnLoc = DeathLocation;
+        FRotator RespawnRot {};
+
+        if (auto StartSpot = GameMode->ChoosePlayerStart(PlayerController))
+        {
+            RespawnLoc = StartSpot->K2_GetActorLocation();
+            RespawnRot = StartSpot->K2_GetActorRotation();
+        }
+        else
+        {
+            RespawnLoc.Z += 15000.f;
+        }
+
+        float RespawnDelay = RespawnDelaySeconds;
+        if (bReload && BlastBerryManager)
+            RespawnDelay = BlastBerryManager->GetRespawnDelay(PlayerState);
+
+        float RespawnAt = (float)UGameplayStatics::GetTimeSeconds(GameState) + RespawnDelay;
+        PlayerState->ServerTimeForRespawn = RespawnAt;
+
+        if (bReload && BlastBerryManager)
+            BlastBerryManager->HandlePlayerRespawnTimeUpdated(PlayerState, RespawnAt);
+
+        PlayerController->SetupClientRespawnTimerAndLocation(RespawnLoc, RespawnRot, DeathLocation, true, false);
+        ClearSpectatorStateForRespawn(PlayerController);
+    }
 
     if (KillerPawn && KillerPlayerState && KillerPawn->Controller != PlayerController)
     {
@@ -733,9 +803,10 @@ void OnPawnDied(AFortPlayerControllerAthena* PlayerController, AFortPlayerPawnAt
         }
     }
 
-    if (GameMode->AlivePlayers.Num() == 0)
-    {
-    }
+    OnPawnDiedOG(PlayerController, KilledPawn, Damage, InTags, EffectContext, EventInstigator, DamageCauser, DBNOFinisher);
+
+    if (bRespawnAllowed)
+        ClearSpectatorStateForRespawn(PlayerController);
 
     /*if (PlayerController->Pawn && KillerPlayerState && KillerPlayerState->AbilitySystemComponent && KillerPawn
         && KillerPawn->Controller != PlayerController)
@@ -858,6 +929,14 @@ void DropItemsOnPawnDestruction(AFortPlayerControllerAthena* _this, uint8_t Dest
 void ServerSpectateActor(AFortPlayerControllerAthena* _this, class AActor* NewViewTarget, bool bAllowStateChange)
 {
     static auto SpectatingName = FName(L"Spectating");
+
+    if (bInfiniteRespawn && _this->PlayerState)
+    {
+        auto PlayerState = (AFortPlayerStateAthena*)_this->PlayerState;
+        auto World = GetWorld();
+        if (World && PlayerState->ServerTimeForRespawn > (float)UGameplayStatics::GetTimeSeconds(World))
+            return;
+    }
 
     if (_this->StateName != SpectatingName && !bAllowStateChange)
     {
@@ -1009,29 +1088,7 @@ void ServerCheat(AFortPlayerController* _this, FString Msg)
         }
         case hash("startevent"):
         {
-            TArray<AActor*> MeshActors;
-            UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASpecialEventScriptMeshActor::StaticClass(), &MeshActors);
-
-            TArray<AActor*> EventScripts;
-            UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASpecialEventScript::StaticClass(), &EventScripts);
-
-            auto MeshActor = (ASpecialEventScriptMeshActor*)MeshActors[0];
-
-            auto Scr = (ASpecialEventScript*)EventScripts[0];
-
-            Scr->DelayAfterConentLoad.Curve.CurveTable = nullptr;
-            Scr->DelayAfterConentLoad.Value = 0.6f;
-
-            auto MeshNetworkSubsystem = (UMeshNetworkSubsystem*)TUObjectArray::FindFirstObject("MeshNetworkSubsystem");
-
-            if (MeshNetworkSubsystem)
-                MeshNetworkSubsystem->NodeType = EMeshNetworkNodeType::Root;
-
-            MeshActor->MeshRootStartEvent();
-
-            if (MeshNetworkSubsystem)
-                MeshNetworkSubsystem->NodeType = EMeshNetworkNodeType::Edge;
-            MeshActor->OnRep_RootStartTime(FDateTime());
+            StartSpecialEventSequence();
 
             break;
         }
@@ -1083,6 +1140,51 @@ void ServerCheat(AFortPlayerController* _this, FString Msg)
         }
         }
     }
+}
+
+// Server-side respawn completion (pattern from Erbium ServerClientIsReadyToRespawn)
+void ServerClientIsReadyToRespawn(UObject* Context, FFrame& Stack)
+{
+    Stack.IncrementCode();
+
+    auto PlayerController = (AFortPlayerControllerAthena*)Context;
+    if (!PlayerController || !PlayerController->PlayerState)
+        return;
+
+    auto GameMode = (AFortGameModeAthena*)GetWorld()->AuthorityGameMode;
+    if (!GameMode)
+        return;
+
+    auto PlayerState = (AFortPlayerStateAthena*)PlayerController->PlayerState;
+
+    if (PlayerState->RespawnData.bRespawnDataAvailable && PlayerState->RespawnData.bServerIsReady)
+    {
+        FTransform SpawnTransform {};
+        SpawnTransform.Translation = PlayerState->RespawnData.RespawnLocation;
+        SpawnTransform.Rotation = RotatorToQuat(PlayerState->RespawnData.RespawnRotation);
+        SpawnTransform.Scale3D = FVector(1, 1, 1);
+
+        auto NewPawn = (AFortPlayerPawnAthena*)GameMode->SpawnDefaultPawnAtTransform(PlayerController, SpawnTransform);
+        if (NewPawn)
+        {
+            PlayerController->Possess(NewPawn);
+            PlayerController->RespawnPlayerAfterDeath(true, false);
+
+            NewPawn->SetHealth(100.f);
+            NewPawn->SetShield(0.f);
+
+            static auto InitializePlayerGameplayAbilities = (void (*)(UInterface*))(ImageBase + 0x9A8894C);
+            auto AbilitySystemInterface = GetInterfaceAddress(PlayerState, UFortAbilitySystemInterface::StaticClass());
+            if (AbilitySystemInterface)
+                InitializePlayerGameplayAbilities(AbilitySystemInterface);
+
+            PlayerState->Place = 0;
+            PlayerState->OnRep_Place();
+            PlayerState->bRespawningFromRespawnData = false;
+        }
+    }
+
+    PlayerState->RespawnData.bClientIsReady = true;
 }
 
 void ForceEquipValidWeapon(AFortPlayerControllerAthena* _this)
@@ -1144,5 +1246,7 @@ void PlayerController__Init()
 
     Hook<AFortPlayerControllerAthena>(uint32(0x283), AFortPlayerControllerZone::GetDefaultObj()->VTable[0x283]); // ServerReturnToMainMenu
     Hook<AFortPlayerControllerAthena>(uint32(0x2F6), ForceEquipValidWeapon);
+
+    ExecHook(AFortPlayerControllerAthena::StaticClass()->FindFunction("ServerClientIsReadyToRespawn"), ServerClientIsReadyToRespawn);
 }
     

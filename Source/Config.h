@@ -4,7 +4,7 @@ constexpr auto bProd = false;
 inline auto Port = 7777;
 inline std::wstring GameserverIP;
 inline std::string Region = "EU";
-inline std::wstring Playlist = L"/BlastBerry/Playlists/Playlist_SunflowerSolo.Playlist_SunflowerSolo";
+inline std::wstring Playlist = L"/BlastBerry/Playlists/Playlist_PunchBerrySolo.Playlist_PunchBerrySolo";
 inline bool bInit = false;
 inline bool bReady = false;
 inline bool bEnableZones = false;
@@ -12,7 +12,8 @@ inline bool bEvent = false;
 inline easywsclient::WebSocket* gsSocket = nullptr;
 
 // GUI Configurations
-inline bool bGUI = true;
+inline bool bGUI = false;
+inline bool bEnableConsole = true;
 inline bool bLateGame = false;
 inline bool bInfiniteMats = false;
 inline bool bInfiniteAmmo = false;
@@ -21,6 +22,10 @@ inline bool bNoFallDamage = false;
 inline bool bStartBusEarlyRequest = false;
 inline int SiphonAmount = 50;
 inline int MaxTickRate = 30;
+
+// Respawn: unlimited respawns after death (3 second delay by default)
+inline bool bInfiniteRespawn = true;
+inline float RespawnDelaySeconds = 3.f;
 
 // L"/QuailPlaylist/Playlist/Playlist_Quail.Playlist_Quail" / Remix: The Finale (Live Event)
 // L"/BlastBerry/Playlists/Playlist_SunflowerSolo.Playlist_SunflowerSolo" / Fortnite Reload - Solos (Venture Map)

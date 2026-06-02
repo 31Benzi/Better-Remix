@@ -169,6 +169,7 @@
     <ClInclude Include="Source\SharedPointer.h" />
     <ClInclude Include="SDK\UnrealContainers.h" />
     <ClInclude Include="Source\GUI.h" />
+    <ClInclude Include="Source\HostAdmin.h" />
     <ClInclude Include="ThirdParty\ImGui\imconfig.h" />
     <ClInclude Include="ThirdParty\ImGui\imgui.h" />
     <ClInclude Include="ThirdParty\ImGui\imgui_impl_dx11.h" />
@@ -225,6 +226,7 @@
     <ClCompile Include="Source\Shared.cpp" />
     <ClCompile Include="Source\SpecialEventScript.cpp" />
     <ClCompile Include="Source\GUI.cpp" />
+    <ClCompile Include="Source\HostAdmin.cpp" />
     <ClCompile Include="ThirdParty\ImGui\imgui.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
