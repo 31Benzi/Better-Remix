@@ -50,7 +50,6 @@ static void EnsureFlightPathInitialized(AFortAthenaMapInfo* MapInfo, AFortGameSt
     }
 }
 
-// Configure playlist for infinite respawn (pattern from Erbium SetupPlaylist)
 static void ConfigureInfiniteRespawn(UFortPlaylistAthena* Playlist)
 {
     if (!bInfiniteRespawn || !Playlist || Playlist->GameType == EFortGameType::BlastBerry)
@@ -66,7 +65,6 @@ static void ConfigureInfiniteRespawn(UFortPlaylistAthena* Playlist)
     Playlist->RespawnTime.Curve.RowName = FName();
     Playlist->RespawnTime.Value = RespawnDelaySeconds;
 
-    // InfiniteRespawnExceptStorm allows unlimited respawns outside the storm
     Playlist->RespawnType = EAthenaRespawnType::InfiniteRespawnExceptStorm;
 
     if (Playlist->bAllowJoinInProgress == false)
@@ -129,6 +127,8 @@ bool ReadyToStartMatch(AFortGameModeAthena* _this)
 
         GameState->CurrentPlaylistInfo.BasePlaylist = Playlist;
         ConfigureInfiniteRespawn(Playlist);
+
+
         //GameState->CurrentPlaylistInfo.OverridePlaylist = PlaylistObj;
         GameState->CurrentPlaylistInfo.BasePlaylist->GarbageCollectionFrequency = 9999999999999999.f;
 
@@ -214,11 +214,17 @@ bool ReadyToStartMatch(AFortGameModeAthena* _this)
     auto AreAllAdditionalPlaylistLevelsVisible = (bool (*)(AFortGameStateAthena*))(ImageBase + 0x9A52B40);
 
     bool bAllAdditionalLevelsVisible = true;
+    
+    if (GameState->AdditionalPlaylistLevelsStreamed.Num() > 0)
+    {
+        GameState->AdditionalPlaylistLevelsStreamed.Clear();
+    }
+    
     if (GameState->AdditionalPlaylistLevelsStreamed.Num() > 0)
         bAllAdditionalLevelsVisible = AreAllAdditionalPlaylistLevelsVisible(GameState);
 
     return _this->bWorldIsReady && GameState->bPlaylistDataIsLoaded && _this->MatchState == WaitingToStart && !GameState->bInSpawningStartup
-        && bAllAdditionalLevelsVisible && CountReadyPlayers(_this) >= _this->WarmupRequiredPlayerCount;
+        && bAllAdditionalLevelsVisible;
     //return _this->AlivePlayers.Num() > 0;
 }
 
@@ -230,8 +236,11 @@ APawn* SpawnDefaultPawnFor(AFortGameModeAthena* _this, AFortPlayerControllerAthe
     
     if (!Pawn)
     {
-        Pawn = (AFortPlayerPawnAthena*)SpawnActor(
-            _this->GetDefaultPawnClassForController(NewPlayer), StartSpot->GetTransform(), NewPlayer, ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn);
+        if (StartSpot)
+        {
+            Pawn = (AFortPlayerPawnAthena*)SpawnActor(
+                _this->GetDefaultPawnClassForController(NewPlayer), StartSpot->GetTransform(), NewPlayer, ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn);
+        }
 
         if (!Pawn)
         {
@@ -848,6 +857,9 @@ void HandleStartingNewPlayer(AFortGameMode* _this, AFortPlayerControllerAthena* 
     auto GameState = (AFortGameStateAthena*)_this->GameState;
     AFortPlayerStateAthena* PlayerState = (AFortPlayerStateAthena*)NewPlayer->PlayerState;
 
+    if (!GameState || !PlayerState)
+        return HandleStartingNewPlayerOG(_this, NewPlayer);
+
     PlayerState->SquadID = PlayerState->TeamIndex - 3;
     PlayerState->OnRep_SquadId();
 
@@ -880,6 +892,86 @@ void HandleStartingNewPlayer(AFortGameMode* _this, AFortPlayerControllerAthena* 
     auto GamePhaseLogic2 = UFortGameStateComponent_BattleRoyaleGamePhaseLogic::Get(_this);
     if (GamePhaseLogic2 && GamePhaseLogic2->GamePhase == EAthenaGamePhase::Warmup)
         NewPlayer->bBuildFree = true;
+
+    auto PlaylistObj = GameState->CurrentPlaylistInfo.BasePlaylist;
+    if (PlaylistObj && PlaylistObj->PlaylistName.ToString().find("Playlist_PlaygroundV2") != std::string::npos)
+    {
+        AFortAthenaCreativePortal* Portal = nullptr;
+
+        TArray<AActor*> AllPortals;
+        UGameplayStatics::GetAllActorsOfClass(GetWorld(), AFortAthenaCreativePortal::StaticClass(), &AllPortals);
+
+        for (auto& Actor : AllPortals)
+        {
+            auto P = (AFortAthenaCreativePortal*)Actor;
+            if (P->OwningPlayer.ReplicationBytes.Num() == 0)
+            {
+                Portal = P;
+                break;
+            }
+        }
+        AllPortals.Free();
+
+        if (Portal)
+        {
+            printf("[Creative] Assigned portal to %s\n", NewPlayer->Name.ToString().c_str());
+
+            if (true) // HasbIsPublishedPortal macro is not present in Remix
+            {
+                Portal->bIsPublishedPortal = false;
+                Portal->OnRep_PublishedPortal();
+            }
+
+            Portal->OwningPlayer = PlayerState->UniqueID;
+            Portal->OnRep_OwningPlayer();
+            Portal->bPortalOpen = true;
+            Portal->OnRep_PortalOpen();
+
+            auto RestrictedPlotDefinition = FindObject<UFortCreativeRealEstatePlotItemDefinition>(L"/Game/Playgrounds/Items/Plots/Temperate_Medium.Temperate_Medium");
+            if (!RestrictedPlotDefinition)
+                RestrictedPlotDefinition = FindObject<UFortCreativeRealEstatePlotItemDefinition>(L"/CR_Legacy/Playgrounds/Items/Plots/Temperate_Medium.Temperate_Medium");
+
+            if (RestrictedPlotDefinition && Portal->LinkedVolume)
+            {
+                auto IslandPlayset = RestrictedPlotDefinition->BasePlayset.Get();
+                auto LevelSaveComponent = (UFortLevelSaveComponent*)Portal->LinkedVolume->GetComponentByClass(UFortLevelSaveComponent::StaticClass());
+
+                if (LevelSaveComponent && !LevelSaveComponent->RestrictedPlotDefinition)
+                {
+                    LevelSaveComponent->AccountIdOfOwner = PlayerState->UniqueID;
+                    LevelSaveComponent->bIsLoaded = true;
+                    LevelSaveComponent->bLoadPlaysetFromPlot = true;
+                    LevelSaveComponent->bAutoLoadFromRestrictedPlotDefinition = true;
+                    LevelSaveComponent->RestrictedPlotDefinition = RestrictedPlotDefinition;
+
+                    // LevelSaveComponent->HasPlotPermissions() macro and PlotPermissions moved in SDK.
+                    // if (LevelSaveComponent->HasPlotPermissions())
+                    //    LevelSaveComponent->PlotPermissions.Permission = 1;
+
+                    // LevelSaveComponent->OnRep_AccountIdOfOwner(); // AccountIdOfOwner doesn't have OnRep in Remix UFortLevelSaveComponent? Wait it's AccountIdOfOwner
+                }
+
+                auto LevelStreamComponent = (UPlaysetLevelStreamComponent*)Portal->LinkedVolume->GetComponentByClass(UPlaysetLevelStreamComponent::StaticClass());
+                if (LevelStreamComponent)
+                {
+                    LevelStreamComponent->SetPlayset(IslandPlayset);
+                }
+            }
+
+            if (Portal->LinkedVolume)
+            {
+                Portal->LinkedVolume->VolumeState = ESpatialLoadingState::Ready;
+                Portal->LinkedVolume->OnRep_VolumeState();
+            }
+
+            NewPlayer->CreativePlotLinkedVolume = NewPlayer->GetCurrentVolume();
+            NewPlayer->OnRep_CreativePlotLinkedVolume();
+        }
+        else
+        {
+            printf("[Creative] No available portals!\n");
+        }
+    }
 
     return HandleStartingNewPlayerOG(_this, NewPlayer);
 }
@@ -983,8 +1075,75 @@ AFortPlayerController* Login(
     return LoginOG(_this, NewPlayer, InRemoteRole, Portal, Options, UniqueId, ErrorMessage);
 }
 
+void TeleportPlayerToLinkedVolume(UObject* Context, FFrame& Stack)
+{
+    AFortPlayerPawnAthena* PlayerPawn = nullptr;
+    bool bUseSpawnTags = false;
+
+    Stack.StepCompiledIn(&PlayerPawn);
+    Stack.StepCompiledIn(&bUseSpawnTags);
+    Stack.IncrementCode();
+    auto Portal = (AFortAthenaCreativePortal*)Context;
+
+    if (!PlayerPawn || !Portal || !Portal->LinkedVolume)
+        return;
+
+    auto PlayerController = (AFortPlayerControllerAthena*)PlayerPawn->Controller;
+    if (!PlayerController)
+        return;
+
+    static auto CreativePhone = FindObject<UFortWeaponItemDefinition>(L"/Game/Athena/Items/Weapons/Prototype/WID_CreativeTool.WID_CreativeTool");
+
+    if (CreativePhone && PlayerController->WorldInventory.ObjectPointer)
+    {
+        auto Inv = (AFortInventory*)PlayerController->WorldInventory.ObjectPointer;
+        auto ItemEntry = Inv->Inventory.ReplicatedEntries.Search(
+            [&](FFortItemEntry& entry)
+            {
+                return entry.ItemDefinition == CreativePhone;
+            });
+
+        if (!ItemEntry)
+        {
+            GiveItem(PlayerController->WorldInventory, CreativePhone, 1);
+            PlayerController->ClientCreativePhoneCreated();
+        }
+    }
+
+    {
+        auto OldbIsCreativeQuickbarEnabled = PlayerController->bIsCreativeQuickbarEnabled;
+        PlayerController->bIsCreativeQuickbarEnabled = true;
+        PlayerController->OnRep_IsCreativeQuickbarEnabled(OldbIsCreativeQuickbarEnabled);
+    }
+    
+    // bIsCreativeQuickmenuEnabled property doesn't have a Has macro
+    // PlayerController->bIsCreativeQuickmenuEnabled = true;
+    
+    {
+        PlayerController->bIsCreativeModeEnabled = true;
+        PlayerController->OnRep_IsCreativeModeEnabled();
+    }
+
+    auto Location = Portal->LinkedVolume->K2_GetActorLocation();
+    Location.Z = 10000;
+
+    PlayerController->CreativePlotLinkedVolume = Portal->LinkedVolume;
+    PlayerController->OnRep_CreativePlotLinkedVolume();
+
+    PlayerPawn->K2_TeleportTo(Location, FRotator());
+    PlayerPawn->BeginSkydiving(false);
+}
+
 void GameMode__Init()
 {
+    auto PortalClass = AFortAthenaCreativePortal::StaticClass();
+    if (PortalClass)
+    {
+        auto Func = PortalClass->FindFunction("TeleportPlayerToLinkedVolume");
+        if (Func)
+            ExecHook(Func, TeleportPlayerToLinkedVolume);
+    }
+
     Hook(ImageBase + 0x918B180, ReadyToStartMatch);
     Hook(ImageBase + 0x918E5B8, SpawnDefaultPawnFor);
     Hook(ImageBase + 0x918177C, FinishWorldInitialization, FinishWorldInitializationOG);

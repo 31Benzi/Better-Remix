@@ -9,8 +9,6 @@
 #include "Config.h"
 #include "GUI.h"
 
-// Check if a UObject's package path contains a blocked prefix (e.g. /DebugUI/).
-// Objects under these paths have missing super-structs and crash when loaded.
 static bool IsBlockedPackagePath(UObject* Object)
 {
     if (!Object || !Object->Class)
@@ -35,11 +33,6 @@ void ClientThread();
 
 void CrashReporter__Init();
 
-// Activates a GameFeature plugin by short name (e.g. L"PunchBerry").
-// Some playlists (Reload Oasis, etc.) live in plugins that are NOT auto-activated
-// by FortGameFeaturePluginManager; their content registry is therefore not mounted
-// and `open <Map>` fails with "not a child of an existing mount point",
-// which the client eventually surfaces as "Network Connection Lost".
 static void ActivateGameFeaturePlugin(const wchar_t* FeatureName)
 {
     if (!FeatureName || !*FeatureName)
@@ -56,7 +49,6 @@ static void ActivateGameFeaturePlugin(const wchar_t* FeatureName)
     CheatManagerCDO->LoadAndActivateGameFeaturePluginViaFeatureName(FString(FeatureName));
 }
 
-// Try to find the playlist asset, repeatedly, while its content plugin is still mounting.
 static UFortPlaylistAthena* WaitForPlaylistAsset(const std::wstring& PlaylistPath, int MaxAttempts = 20, int SleepMs = 250)
 {
     for (int attempt = 0; attempt < MaxAttempts; ++attempt)
@@ -74,7 +66,6 @@ static UFortPlaylistAthena* WaitForPlaylistAsset(const std::wstring& PlaylistPat
     return nullptr;
 }
 
-// Diagnostic: dump every package whose name contains `Needle` (case-insensitive).
 static void LogPackagesMatching(const std::wstring& Needle)
 {
     std::wstring lowerNeedle = Needle;
@@ -109,9 +100,6 @@ static void LogPackagesMatching(const std::wstring& Needle)
         printf("[Remix]   No mounted packages contain '%ls'.\n", Needle.c_str());
 }
 
-// Resolve the actual on-disk map URL by reading PreloadPersistentLevel from the
-// playlist asset, and activate any plugins the playlist declares it needs.
-// Returns an empty string if resolution failed; caller should fall back.
 static std::wstring PrepareAndResolveMapURL(const std::wstring& PlaylistPath, const std::wstring& FallbackShortName)
 {
     auto Playlist = WaitForPlaylistAsset(PlaylistPath);
@@ -140,9 +128,9 @@ static std::wstring PrepareAndResolveMapURL(const std::wstring& PlaylistPath, co
     auto PackageName = Playlist->PreloadPersistentLevel.ObjectID.AssetPath.PackageName.ToString();
     std::wstring MapURL(PackageName.begin(), PackageName.end());
 
-    if (MapURL.empty())
+    if (MapURL.empty() || MapURL == L"None")
     {
-        printf("[Remix] Playlist PreloadPersistentLevel is empty; will fall back to '%ls'.\n", FallbackShortName.c_str());
+        printf("[Remix] Playlist PreloadPersistentLevel is empty or None; will fall back to '%ls'.\n", FallbackShortName.c_str());
         LogPackagesMatching(FallbackShortName);
         return L"";
     }
@@ -260,12 +248,10 @@ void Main(HMODULE hModule)
 
     UKismetSystemLibrary::ExecuteConsoleCommand(GetWorld(), L"log LogFortUIDirector None", nullptr);
     UKismetSystemLibrary::ExecuteConsoleCommand(GetWorld(), L"log LogFortUIManager None", nullptr);
-    // Suppress DebugUI streaming errors that cause crash cascades on Quail playlist
     UKismetSystemLibrary::ExecuteConsoleCommand(GetWorld(), L"log LogStreaming Error", nullptr);
 
     ////GetWorld()->OwningGameInstance->LocalPlayers.Remove(0);
     ////
-    // Parse playlist from command line
     auto cmdAllocated = UKismetSystemLibrary::GetCommandLine().ToString();
     std::string cmd(cmdAllocated.c_str());
     printf("[Remix] Server CommandLine: %s\n", cmd.c_str());
@@ -296,6 +282,10 @@ void Main(HMODULE hModule)
                     Playlist = L"/Rumble/Playlists/Playlist_Respawn_24.Playlist_Respawn_24";
                 else if (wParsed == L"Playlist_DefaultSolo" || wParsed == L"playlist_defaultsolo")
                     Playlist = L"/BRPlaylists/Athena/Playlists/Playlist_DefaultSolo.Playlist_DefaultSolo";
+                else if (wParsed == L"Playlist_TestBuild_Solo" || wParsed == L"playlist_testbuild_solo")
+                    Playlist = L"/BRPlaylists/Athena/Playlists/TestBuild/Playlist_TestBuild_Solo.Playlist_TestBuild_Solo";
+                else if (wParsed == L"Playlist_Creative_Play_V2" || wParsed == L"playlist_creative_play_v2")
+                    Playlist = L"/CreativeCore/Playlists/Creative_PlayOnlyPlaylists/Playlist_Creative_Play_V2.Playlist_Creative_Play_V2";
                 else
                 {
                     Playlist = L"/BRPlaylists/Athena/Playlists/" + wParsed + L"." + wParsed;
@@ -310,7 +300,6 @@ void Main(HMODULE hModule)
         }
     }
 
-    // Hardcoded fallback short names (used only if reading the playlist asset fails).
     std::wstring fallbackMap = L"BlastBerry_Terrain";
     if (Playlist == L"/QuailPlaylist/Playlist/Playlist_Quail.Playlist_Quail")
         fallbackMap = L"Apollo_Terrain_Retro";
@@ -322,9 +311,11 @@ void Main(HMODULE hModule)
         fallbackMap = L"Apollo_Terrain_Retro";
     else if (Playlist == L"/BRPlaylists/Athena/Playlists/Playlist_DefaultSolo.Playlist_DefaultSolo")
         fallbackMap = L"Apollo_Terrain_Retro";
+    else if (Playlist == L"/BRPlaylists/Athena/Playlists/TestBuild/Playlist_TestBuild_Solo.Playlist_TestBuild_Solo")
+        fallbackMap = L"Apollo_Terrain_Retro";
+    else if (Playlist == L"/CreativeCore/Playlists/Creative_PlayOnlyPlaylists/Playlist_Creative_Play_V2.Playlist_Creative_Play_V2")
+        fallbackMap = L"Creative_NoApollo_Terrain";
 
-    // Read the actual map URL from the playlist asset (and activate any plugins it requires).
-    // This is the source of truth and avoids relying on short-name lookups.
     auto effectivePlaylist = bEvent ? std::wstring(L"/QuailPlaylist/Playlist/Playlist_Quail.Playlist_Quail") : Playlist;
     std::wstring startupMap = PrepareAndResolveMapURL(effectivePlaylist, fallbackMap);
     if (startupMap.empty())

@@ -62,7 +62,6 @@ void ForceIris(uintptr_t IrisBool)
 
 void Main()
 {
-    // Wait until FortEngine is fully initialized
     while (true)
     {
         auto Engine = (UEngine*)TUObjectArray::FindFirstObject("FortEngine");
@@ -76,19 +75,16 @@ void Main()
     auto Engine = (UEngine*)TUObjectArray::FindFirstObject("FortEngine");
     auto World = Engine->GameViewport->World;
 
-    // Apply CVar and encryption settings
     UKismetSystemLibrary::ExecuteConsoleCommand(World, FString(L"net.AllowEncryption 0"), nullptr);
     UKismetSystemLibrary::ExecuteConsoleCommand(World, FString(L"log LogIris None"), nullptr);
     UKismetSystemLibrary::ExecuteConsoleCommand(World, FString(L"log LogIrisRpc None"), nullptr);
     UKismetSystemLibrary::ExecuteConsoleCommand(World, FString(L"log LogIrisBridge None"), nullptr);
     UKismetSystemLibrary::ExecuteConsoleCommand(World, FString(L"log LogFortUIDirector None"), nullptr);
 
-    // Override tactical movement mechanics if needed to match gameserver DLL expectations
     UKismetSystemLibrary::ExecuteConsoleCommand(World, FString(L"Fort.MME.TacticalSprint 0"), nullptr);
     UKismetSystemLibrary::ExecuteConsoleCommand(World, FString(L"Fort.MME.Hurdle 0"), nullptr);
     UKismetSystemLibrary::ExecuteConsoleCommand(World, FString(L"Fort.MME.Sliding 0"), nullptr);
 
-    // Dynamic Iris forced replication setup
     auto IrisBool = FindCVar<uint32_t>(L"net.Iris.UseIrisReplication");
     if (IrisBool)
     {
@@ -96,7 +92,6 @@ void Main()
         ForceIris((uintptr_t)IrisBool);
     }
 
-    // Call console and cheat manager setup
     RemixConsole::Init();
 }
 

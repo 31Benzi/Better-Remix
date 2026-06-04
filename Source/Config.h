@@ -4,7 +4,7 @@ constexpr auto bProd = false;
 inline auto Port = 7777;
 inline std::wstring GameserverIP;
 inline std::string Region = "EU";
-inline std::wstring Playlist = L"/BlastBerry/Playlists/Playlist_PunchBerrySolo.Playlist_PunchBerrySolo";
+inline std::wstring Playlist = L"/BRPlaylists/Athena/Playlists/TestBuild/Playlist_TestBuild_Solo.Playlist_TestBuild_Solo";
 inline bool bInit = false;
 inline bool bReady = false;
 inline bool bEnableZones = false;
@@ -12,8 +12,8 @@ inline bool bEvent = false;
 inline easywsclient::WebSocket* gsSocket = nullptr;
 
 // GUI Configurations
-inline bool bGUI = false;
-inline bool bEnableConsole = true;
+inline bool bGUI = true;
+inline bool bEnableConsole = false;
 inline bool bLateGame = false;
 inline bool bInfiniteMats = false;
 inline bool bInfiniteAmmo = false;
@@ -32,5 +32,7 @@ inline float RespawnDelaySeconds = 3.f;
 // L"/BlastBerry/Playlists/Playlist_PunchBerrySolo.Playlist_PunchBerrySolo" / Fortnite Reload - Solos (Oasis Map)
 // L"/Rumble/Playlists/Playlist_Respawn_24.Playlist_Respawn_24" / Team Rumble
 // L"/BRPlaylists/Athena/Playlists/Playlist_DefaultSolo.Playlist_DefaultSolo" / Standard Battle Royale - Solos
+// L"/BRPlaylists/Athena/Playlists/TestBuild/Playlist_TestBuild_Solo.Playlist_TestBuild_Solo" / Test Build
+// L"/CreativeCore/Playlists/Playlist_PlaygroundV2.Playlist_PlaygroundV2" / Creative
 
 

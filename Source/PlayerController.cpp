@@ -1212,6 +1212,58 @@ void ForceEquipValidWeapon(AFortPlayerControllerAthena* _this)
     }
 }
 
+void ServerTeleportToPlaygroundLobbyIsland(UObject* Context, FFrame& Stack)
+{
+    Stack.IncrementCode();
+
+    auto PlayerController = (AFortPlayerControllerAthena*)Context;
+    if (!PlayerController)
+        return;
+
+    auto GameMode = (AFortGameModeAthena*)GetWorld()->AuthorityGameMode;
+    if (!GameMode)
+        return;
+
+    static auto CreativePhone = FindObject<UFortWeaponItemDefinition>(L"/Game/Athena/Items/Weapons/Prototype/WID_CreativeTool.WID_CreativeTool");
+
+    if (CreativePhone && PlayerController->WorldInventory.ObjectPointer)
+    {
+        auto Inv = (AFortInventory*)PlayerController->WorldInventory.ObjectPointer;
+        auto ItemEntry = Inv->Inventory.ReplicatedEntries.Search(
+            [&](FFortItemEntry& entry)
+            {
+                return entry.ItemDefinition == CreativePhone;
+            });
+
+        if (ItemEntry)
+            Remove(PlayerController->WorldInventory, ItemEntry->ItemGuid);
+    }
+
+    {
+        auto OldbIsCreativeQuickbarEnabled = PlayerController->bIsCreativeQuickbarEnabled;
+        PlayerController->bIsCreativeQuickbarEnabled = false;
+        PlayerController->OnRep_IsCreativeQuickbarEnabled(OldbIsCreativeQuickbarEnabled);
+    }
+    // bIsCreativeQuickmenuEnabled does not have a Has macro
+    // PlayerController->bIsCreativeQuickmenuEnabled = false;
+    {
+        PlayerController->bIsCreativeModeEnabled = false;
+        PlayerController->OnRep_IsCreativeModeEnabled();
+    }
+
+    if (PlayerController->Pawn)
+    {
+        AActor* Actor = GameMode->ChoosePlayerStart(PlayerController);
+        if (Actor)
+        {
+            PlayerController->Pawn->K2_TeleportTo(Actor->K2_GetActorLocation(), Actor->K2_GetActorRotation());
+        }
+    }
+
+    PlayerController->CreativePlotLinkedVolume = PlayerController->GetCurrentVolume();
+    PlayerController->OnRep_CreativePlotLinkedVolume();
+}
+
 void PlayerController__Init()
 {
     Hook<AFortPlayerControllerAthena>(uint32(0x135), ServerAcknowledgePossession);
@@ -1248,5 +1300,9 @@ void PlayerController__Init()
     Hook<AFortPlayerControllerAthena>(uint32(0x2F6), ForceEquipValidWeapon);
 
     ExecHook(AFortPlayerControllerAthena::StaticClass()->FindFunction("ServerClientIsReadyToRespawn"), ServerClientIsReadyToRespawn);
+
+    auto TeleportFunc = AFortPlayerControllerAthena::StaticClass()->FindFunction("ServerTeleportToPlaygroundLobbyIsland");
+    if (TeleportFunc)
+        ExecHook(TeleportFunc, ServerTeleportToPlaygroundLobbyIsland);
 }
     

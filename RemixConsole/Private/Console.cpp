@@ -35,14 +35,12 @@ void ClientThread()
 
 void RemixConsole::Init()
 {
-    // Spawns viewport console dynamically
     auto Engine = (UEngine*)TUObjectArray::FindFirstObject("FortEngine");
     if (Engine && Engine->GameViewport && Engine->ConsoleClass)
     {
         Engine->GameViewport->ViewportConsole = (UConsole*)UGameplayStatics::SpawnObject(Engine->ConsoleClass, Engine->GameViewport);
     }
 
-    // Custom play list modifier for respawns if requested
     for (uint32_t i = 0; i < TUObjectArray::Num(); i++)
     {
         auto Object = TUObjectArray::GetObjectByIndex(i);
