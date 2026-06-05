@@ -4,7 +4,7 @@ constexpr auto bProd = false;
 inline auto Port = 7777;
 inline std::wstring GameserverIP;
 inline std::string Region = "EU";
-inline std::wstring Playlist = L"/BRPlaylists/Athena/Playlists/TestBuild/Playlist_TestBuild_Solo.Playlist_TestBuild_Solo";
+inline std::wstring Playlist = L"/BlastBerry/Playlists/Playlist_SunflowerSolo.Playlist_SunflowerSolo" ;
 inline bool bInit = false;
 inline bool bReady = false;
 inline bool bEnableZones = false;

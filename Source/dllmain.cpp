@@ -318,6 +318,14 @@ void Main(HMODULE hModule)
 
     auto effectivePlaylist = bEvent ? std::wstring(L"/QuailPlaylist/Playlist/Playlist_Quail.Playlist_Quail") : Playlist;
     std::wstring startupMap = PrepareAndResolveMapURL(effectivePlaylist, fallbackMap);
+
+    if (effectivePlaylist.find(L"/BlastBerry/Playlists/") != std::wstring::npos)
+    {
+        if (startupMap != fallbackMap)
+            printf("[Remix] BlastBerry playlist detected; forcing startup map to fallback '%ls'.\n", fallbackMap.c_str());
+        startupMap = fallbackMap;
+    }
+
     if (startupMap.empty())
         startupMap = fallbackMap;
 
